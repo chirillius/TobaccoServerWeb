@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TobacoServer")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+051a9adf235c1a67b0d6995ebb41ee202065395c")]
 [assembly: System.Reflection.AssemblyProductAttribute("TobacoServer")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TobacoServer")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -72,9 +72,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="TobaccoEntities">
-      <HintPath>..\..\TobaccoEntities\TobaccoEntities\bin\Debug\net8.0\TobaccoEntities.dll</HintPath>
-    </Reference>
+    <ProjectReference Include="..\..\TobaccoEntitiesWeb\TobaccoEntities\TobaccoEntities.csproj" />
   </ItemGroup>
 
   <ItemGroup>

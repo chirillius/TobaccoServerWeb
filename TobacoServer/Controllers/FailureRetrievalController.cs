@@ -295,7 +295,7 @@ namespace TobacoServer.Controllers
             return (startDate, endDate);
         }
 
-        private static async Task<bool> MarkVerifiedAsync<TDefect>(Task<TDefect?> defectTask) where TDefect : Defect
+        private static async Task<bool> MarkVerifiedAsync<TDefect>(Task<TDefect?> defectTask) where TDefect : class
         {
             var defect = await defectTask;
             if (defect is null)
@@ -303,7 +303,13 @@ namespace TobacoServer.Controllers
                 return false;
             }
 
-            defect.Verified = true;
+            var verifiedProperty = defect.GetType().GetProperty("Verified");
+            if (verifiedProperty?.PropertyType != typeof(bool) || !verifiedProperty.CanWrite)
+            {
+                return false;
+            }
+
+            verifiedProperty.SetValue(defect, true);
             return true;
         }
     }
