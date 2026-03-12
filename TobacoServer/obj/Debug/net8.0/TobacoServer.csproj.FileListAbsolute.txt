@@ -1,0 +1,7 @@
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.csproj.AssemblyReference.cache
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\rpswa.dswa.cache.json
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.AssemblyInfoInputs.cache
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.AssemblyInfo.cs
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.csproj.CoreCompileInputs.cache
+C:\Users\kitil\Desktop\webArchiveRetrieval\TobaccoServer\TobacoServer\obj\Debug\net8.0\TobacoServer.MvcApplicationPartsAssemblyInfo.cache

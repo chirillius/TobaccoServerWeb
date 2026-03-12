@@ -1,0 +1,310 @@
+﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Newtonsoft.Json;
+using System.Collections.Frozen;
+using System.ComponentModel;
+using System.Linq.Expressions;
+using System.Reflection;
+using TobaccoEntities;
+using TobaccoEntities.Models;
+using TobacoServer.Models.DbContext;
+
+namespace TobacoServer.Controllers
+{
+    [Route("[controller]")]
+    public class FailureRetrievalController : Controller
+    {
+        protected string _defectImageAddress = System.Configuration.ConfigurationManager.AppSettings["DefectImageServiceAddress"];
+        private AppDbContext _db;
+        public FailureRetrievalController(AppDbContext db)
+        {
+            _db = db;
+        }
+
+        [HttpGet]
+        [Route("image")]
+        public async Task<FileResult> GetDefectImage([FromQuery] long globalId)
+        {
+            var defectImage = _db.DefectImages.First(x => x.Id == globalId);
+            return PhysicalFile(defectImage.Path, "image/jpeg");
+        }
+
+        [HttpPost]
+        [Route("false-positive/{defect}-{id}")]
+        public async Task<IActionResult> MarkImageAsFalsePositive(string defect, long id)
+        {
+            HttpClient client = new HttpClient();
+            var response = await client.PostAsync($"{_defectImageAddress}images/false-positive/{defect}-{id}", null);
+            if (response.StatusCode == System.Net.HttpStatusCode.Created)
+            {
+                return StatusCode(201);
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+            {
+                return StatusCode(204);
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return StatusCode(404);
+            return StatusCode(200);
+        }
+
+        [HttpPost]
+        [Route("verified/{defect}-{id}")]
+        public async Task<IActionResult> MarkDefectAsVerified(string defect, long id)
+        {
+            var normalizedDefect = defect.Trim().ToLowerInvariant();
+            var updated = normalizedDefect switch
+            {
+                "delays" => await MarkVerifiedAsync(_db.Delays.FirstOrDefaultAsync(x => x.Id == id)),
+                "toomanypeopleatstall" => await MarkVerifiedAsync(_db.TooManyPeopleAtStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "smoke" => await MarkVerifiedAsync(_db.SmokeFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "nooneatstallfortoolong" => await MarkVerifiedAsync(_db.NoOneAtStallForTooLongFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "light" => await MarkVerifiedAsync(_db.LightFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "crowd" => await MarkVerifiedAsync(_db.Crowds.FirstOrDefaultAsync(x => x.Id == id)),
+                "cashregister" => await MarkVerifiedAsync(_db.CashRegisterFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "countingcashregister" => await MarkVerifiedAsync(_db.CountingCashRegisterFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "abandonedopencashregister" => await MarkVerifiedAsync(_db.AbandonedOpenCashRegisterFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "humandetectionbeforeandaftershift" => await MarkVerifiedAsync(_db.HumanDetectionBeforeAndAfterShiftFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "servicenearcabinet" => await MarkVerifiedAsync(_db.ServiceNearCabinetFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "phone" => await MarkVerifiedAsync(_db.PhoneFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "pose" => await MarkVerifiedAsync(_db.PoseFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "mopping" => await MarkVerifiedAsync(_db.MoppingFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "clothes" => await MarkVerifiedAsync(_db.ClothesControlFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "surfaceclear" => await MarkVerifiedAsync(_db.ClearStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "bottles" => await MarkVerifiedAsync(_db.BottleFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "inactivesalesman" => await MarkVerifiedAsync(_db.InactiveSalesmanFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "badge" => await MarkVerifiedAsync(_db.BadgeFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                _ => false
+            };
+
+            if (!updated)
+            {
+                return NotFound();
+            }
+
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
+
+        [HttpGet]
+        [Route("delays")]
+        public async Task<List<Delay>> GetDelays([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.Delays.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("too-many-people-at-stall")]
+        public async Task<List<TooManyPeopleAtStallFailure>> GetToManyPeopleAtStallFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.TooManyPeopleAtStallFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("smoke")]
+        public async Task<List<Smoke>> GetSmokeFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.SmokeFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("no-one-at-stall-for-too-long")]
+        public async Task<List<NoOneAtStallForTooLongFailure>> GetNoOneAtStallForTooLong([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.NoOneAtStallForTooLongFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+
+        [HttpGet]
+        [Route("light")]
+        public async Task<List<LightFailure>> GetLightFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.LightFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("crowd")]
+        public async Task<List<Crowd>> GetCrowdFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.Crowds.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+
+        [HttpGet]
+        [Route("cash-register")]
+        public async Task<List<CashRegisterFailure>> GetCashRegisterFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.CashRegisterFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("counting-cash-register")]
+        public async Task<List<CountingCashRegisterFailure>> GetCountingCashRegisterFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            return await _db.CountingCashRegisterFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).ToListAsync();
+        }
+
+        [HttpGet]
+        [Route("abandoned-open-cash-register")]
+        public async Task<List<AbandonedOpenCashRegisterFailure>> GetAbandonedOpenCashRegisterFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.AbandonedOpenCashRegisterFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("human-detection-before-and-after-shift")]
+        public async Task<List<HumanDetectionBeforeAndAfterShiftFailure>> GetHumanDetectionBeforeAndAfterShiftFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            try
+            {
+                var defects = (await _db.HumanDetectionBeforeAndAfterShiftFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+                return defects;
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+
+        }
+
+        [HttpGet]
+        [Route("service-near-cabinet")]
+        public async Task<List<ServiceNearCabinetFailure>> GetServiceNearCabinetFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.ServiceNearCabinetFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("phone")]
+        public async Task<List<PhoneFailure>> GetPhoneFailuresAsync([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.PhoneFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+
+        [HttpGet]
+        [Route("pose")]
+        public async Task<List<PoseFailure>> GetPoseFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.PoseFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("mopping")]
+        public async Task<List<MoppingFailure>> GetMoppingFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            return await _db.MoppingFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).ToListAsync();
+        }
+
+        [HttpGet]
+        [Route("clothes")]
+        public async Task<List<ClothesControlFailure>> GetClothesFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.ClothesControlFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("surface-clear")]
+        public async Task<List<ClearStallFailure>> GetClearStallFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.ClearStallFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("bottles")]
+        public async Task<List<BottleFailure>> GetBottlesFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = (await _db.BottleFailures.Where(x => x.StartDateTime >= startDateTime && x.EndDateTime <= endDateTime).OrderByDescending(x => x.StartDateTime).Include(x => x.DefectImage).ToListAsync());
+            defects.ForEach(x => x.DefectImage.Path = "");
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("inactive-salesman")]
+        public async Task<List<InactiveSalesmanFailure>> GetInactiveSalesmanFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            return await _db.InactiveSalesmanFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).ToListAsync();
+        }
+
+        [HttpGet]
+        [Route("badge")]
+        public async Task<List<BadgeFailure>> GetBadgeFailures([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            return await _db.BadgeFailures.Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime).OrderByDescending(x => x.DateTime).ToListAsync();
+        }
+
+        [HttpGet]
+        [Route("routes")]
+        public async Task<List<string>> GetRoutes()
+        {
+            var classType = this.GetType();
+            var methods = classType.GetMethods();
+            var httpGetMethods = methods.Where(x => x.GetCustomAttributes(typeof(HttpGetAttribute), true).Count() > 0).ToList();
+            var routes = new List<string>();
+            foreach (var method in methods)
+            {
+                var routeAttribute = method.GetCustomAttribute<RouteAttribute>()?.Template;
+                if (!string.IsNullOrEmpty(routeAttribute))
+                {
+                    routes.Add(routeAttribute);
+                }
+            }
+            return routes;
+        }
+
+        public (DateTime startDate, DateTime endDate) ParseDate(string? startDateTime, string? endDateTime)
+        {
+            var startDate = DateTime.Now.AddDays(-7).Date;
+            if (!string.IsNullOrEmpty(startDateTime))
+            {
+                startDate = DateTime.Parse(startDateTime);
+            }
+            var endDate = DateTime.Now.Date;
+            if (!string.IsNullOrEmpty(endDateTime))
+            {
+                endDate = DateTime.Parse(endDateTime);
+            }
+            return (startDate, endDate);
+        }
+
+        private static async Task<bool> MarkVerifiedAsync<TDefect>(Task<TDefect?> defectTask) where TDefect : Defect
+        {
+            var defect = await defectTask;
+            if (defect is null)
+            {
+                return false;
+            }
+
+            defect.Verified = true;
+            return true;
+        }
+    }
+}
