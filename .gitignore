@@ -1,9 +1,13 @@
 # Build outputs
 bin/
 obj/
+**/Videos
+**/Archives
+**/Configuration
+**/Images
 
 # Visual Studio / Rider / VS Code
-.vs/
+**/.vs/
 .idea/
 .vscode/
 

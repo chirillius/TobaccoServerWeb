@@ -52,10 +52,19 @@ namespace TobacoServer.Controllers
         [Route("syncronize")]
         public async Task<IActionResult> SyncronizeZones([FromBody] Zone zone)
         {
+            if (zone is null || zone.Rectangle is null || string.IsNullOrWhiteSpace(zone.CameraAddress))
+            {
+                return BadRequest("Некорректные данные зоны.");
+            }
+
             if (!string.IsNullOrWhiteSpace(zone.Name))
             {
-                string name = zone.Name.Trim().ToLower();           
-                zone.Name = char.ToUpper(name[0]) + name[1..];      
+                string name = zone.Name.Trim().ToLower();
+                zone.Name = char.ToUpper(name[0]) + name[1..];
+            }
+            else
+            {
+                return BadRequest("Название зоны не указано.");
             }
 
 

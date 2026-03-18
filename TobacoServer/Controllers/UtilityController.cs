@@ -41,6 +41,38 @@ namespace TobacoServer.Controllers
         }
 
         [HttpGet]
+        [Route("get-camera-preview")]
+        public IActionResult GetSingleCameraPreview([FromQuery] string cameraAddress)
+        {
+            var cameras = _currentStoreHandlingService.GetStore().Cameras;
+            var camera = cameras.FirstOrDefault(c => c.Address == cameraAddress);
+
+            if (camera == null)
+                return NotFound("Камера не найдена.");
+
+            using var videoCapture = new VideoCapture(camera.Address);
+            var image = videoCapture.RetrieveMat();
+
+            var retryCount = 0;
+            while ((image == null || image.Empty()) && retryCount < 100)
+            {
+                image = videoCapture.RetrieveMat();
+                retryCount++;
+            }
+
+            if (image != null && !image.Empty())
+            {
+                using var resizedImage = new Mat();
+                Cv2.Resize(image, resizedImage, new OpenCvSharp.Size(1920, 1080));
+                Cv2.ImEncode(".jpeg", resizedImage, out var buffer);
+                image.Dispose();
+                return Ok(new { image = Convert.ToBase64String(buffer) });
+            }
+
+            return BadRequest("Не удалось получить превью.");
+        }
+
+        [HttpGet]
         [Route("get-camera-preview-areas")]
         public IActionResult GetCameraPreview([FromQuery] string cameraAddress)
         {

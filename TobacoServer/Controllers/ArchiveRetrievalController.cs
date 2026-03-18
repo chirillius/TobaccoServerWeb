@@ -461,18 +461,18 @@ namespace TobacoServer.Controllers
             var buffer = new byte[bufferSize];
 
             using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read);
+            Response.StatusCode = StatusCodes.Status200OK;
+            Response.ContentType = "application/zip";
+            Response.ContentLength = fs.Length;
 
-            var count = -1;
-            while (count != 0)
+            int count;
+            while ((count = await fs.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                count = await fs.ReadAsync(buffer, 0, buffer.Length);
-                await Response.BodyWriter.WriteAsync(buffer);
+                await Response.Body.WriteAsync(buffer.AsMemory(0, count));
             }
 
-            await Response.BodyWriter.FlushAsync();
-            await Response.BodyWriter.CompleteAsync();
+            await Response.Body.FlushAsync();
             Debug.WriteLine($"DONE ---- {DateTime.Now}");
-            fs.Dispose();
         }
 
         [HttpGet]
@@ -538,20 +538,36 @@ namespace TobacoServer.Controllers
         }
 
 
+        [HttpGet]
+        [Route("download-archive")]
+        public async Task<IActionResult> GetZipFileAsync([FromQuery] string zipPath)
+        {
+            return await ReturnZipFileAsync(zipPath);
+        }
+
         [HttpPost]
         [Route("download-archive")]
-        public async Task<IActionResult> GetZipFileAsync([FromBody] string zipPath)
+        public async Task<IActionResult> PostZipFileAsync([FromBody] string zipPath)
+        {
+            return await ReturnZipFileAsync(zipPath);
+        }
+
+        private Task<IActionResult> ReturnZipFileAsync(string zipPath)
         {
             if (System.IO.File.Exists(zipPath))
             {
                 ArchiveHelper.StartSendingHeartbeat(zipPath, TrackingType.File);
-                await SendZipAsync(zipPath);
-                ArchiveHelper.StopSendingHeartbeat(zipPath);
-                return new EmptyResult();
+                HttpContext.Response.OnCompleted(() =>
+                {
+                    ArchiveHelper.StopSendingHeartbeat(zipPath);
+                    return Task.CompletedTask;
+                });
+                return Task.FromResult<IActionResult>(
+                    PhysicalFile(zipPath, "application/zip", Path.GetFileName(zipPath), enableRangeProcessing: false));
 
             }
 
-            return BadRequest();
+            return Task.FromResult<IActionResult>(BadRequest());
         }
 
     }

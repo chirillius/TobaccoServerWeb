@@ -1,19 +1,25 @@
 using System.Diagnostics;
 using System.Text;
-using TobaccoEntities.Models;
 
 namespace TobacoServer.Services
 {
-    public class StreamingHandlerService
+    public class StreamingHandlerService : IDisposable
     {
         private static readonly Dictionary<int, Process> _processes = new();
         private static readonly Dictionary<int, string> _keys = new();
-        // Для каждой камеры хранится множество userId активных потребителей
         private static readonly Dictionary<int, HashSet<string>> _consumersByUser = new();
+        private static readonly Dictionary<int, DateTime> _lastActivityUtc = new();
         private static readonly object _lock = new();
+        private static readonly TimeSpan _streamInactivityTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan _cleanupInterval = TimeSpan.FromSeconds(5);
 
-        private readonly string _playlistsPath =
-            Path.Combine(Directory.GetCurrentDirectory(), "Playlists");
+        private readonly string _playlistsPath = Path.Combine(Directory.GetCurrentDirectory(), "Playlists");
+        private readonly Timer _cleanupTimer;
+
+        public StreamingHandlerService()
+        {
+            _cleanupTimer = new Timer(_ => CleanupInactiveSlots(), null, _cleanupInterval, _cleanupInterval);
+        }
 
         private string GenerateRandomKey()
         {
@@ -22,71 +28,29 @@ namespace TobacoServer.Services
             var sb = new StringBuilder(10);
 
             for (int i = 0; i < 10; i++)
+            {
                 sb.Append(chars[random.Next(chars.Length)]);
+            }
 
             return sb.ToString();
         }
 
-        // ==========================
-        // HANDSHAKE
-        // ==========================
         public string CreateEmptySlot(int id, CurrentStoreHandlingService currentStoreHandlingService)
         {
             lock (_lock)
             {
                 var dir = Path.Combine(_playlistsPath, id.ToString());
-                var hasExistingProcess = _processes.TryGetValue(id, out var existingProcess);
-                var hasExistingKey = _keys.TryGetValue(id, out var existingToken);
 
-                if (hasExistingProcess && hasExistingKey)
+                if (_processes.TryGetValue(id, out var existingProcess) && _keys.TryGetValue(id, out var existingToken))
                 {
                     var existingPlaylistPath = Path.Combine(dir, $"{existingToken}.m3u8");
-
-                    // Если процесс живой и плейлист существует — переиспользуем слот
-                    if (!existingProcess.HasExited && System.IO.File.Exists(existingPlaylistPath))
+                    if (!existingProcess.HasExited && File.Exists(existingPlaylistPath))
                     {
+                        _lastActivityUtc[id] = DateTime.UtcNow;
                         return existingToken;
                     }
 
-                    // Иначе считаем слот "зависшим" и аккуратно его очищаем
-                    try
-                    {
-                        if (!existingProcess.HasExited)
-                        {
-                            existingProcess.StandardInput.WriteLine("q");
-                            existingProcess.StandardInput.Flush();
-                            if (!existingProcess.WaitForExit(3000))
-                            {
-                                existingProcess.Kill(entireProcessTree: true);
-                                existingProcess.WaitForExit();
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        if (!existingProcess.HasExited)
-                        {
-                            existingProcess.Kill(entireProcessTree: true);
-                        }
-                    }
-                    finally
-                    {
-                        existingProcess.Dispose();
-                    }
-
-                    _processes.Remove(id);
-                    _keys.Remove(id);
-                    _consumersByUser.Remove(id);
-
-                    try
-                    {
-                        if (Directory.Exists(dir))
-                            Directory.Delete(dir, true);
-                    }
-                    catch
-                    {
-                        // Игнорируем ошибки удаления, чтобы не блокировать новый слот
-                    }
+                    StopSlotCore(id);
                 }
 
                 Directory.CreateDirectory(dir);
@@ -97,15 +61,13 @@ namespace TobacoServer.Services
                     .FirstOrDefault(x => x.Id == id);
 
                 if (camera is null)
+                {
                     throw new Exception("Camera not found");
+                }
 
-                // Генерация токена (ключа) сразу
                 var token = GenerateRandomKey();
-
-                // Путь плейлиста теперь совпадает с токеном
                 var playlistPath = Path.Combine(dir, $"{token}.m3u8");
 
-                // Сегменты HLS: чтобы ffmpeg создавал отдельные ts
                 var args =
                     $"-i {camera.Address} " +
                     "-c:v copy -c:a aac -g 25 " +
@@ -121,33 +83,30 @@ namespace TobacoServer.Services
                     RedirectStandardError = true,
                     RedirectStandardOutput = true,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
                 };
 
                 var process = new Process { StartInfo = startInfo };
                 process.Start();
-
-                // Читаем stderr, чтобы ffmpeg не блокировался
                 process.BeginErrorReadLine();
 
                 _processes[id] = process;
                 _keys[id] = token;
                 _consumersByUser[id] = new HashSet<string>(StringComparer.Ordinal);
+                _lastActivityUtc[id] = DateTime.UtcNow;
 
                 return token;
             }
         }
 
-
-        // ==========================
-        // CLIENT CONNECT
-        // ==========================
         public void TakeSlot(int id, string userId)
         {
             lock (_lock)
             {
                 if (!_processes.ContainsKey(id))
+                {
                     return;
+                }
 
                 if (!_consumersByUser.TryGetValue(id, out var users))
                 {
@@ -159,60 +118,105 @@ namespace TobacoServer.Services
                 {
                     users.Add(userId);
                 }
+
+                _lastActivityUtc[id] = DateTime.UtcNow;
             }
         }
 
-        // ==========================
-        // CLIENT DISCONNECT
-        // ==========================
+        public void TouchSlotActivity(int id)
+        {
+            lock (_lock)
+            {
+                if (_processes.ContainsKey(id))
+                {
+                    _lastActivityUtc[id] = DateTime.UtcNow;
+                }
+            }
+        }
+
         public void ReleaseSlot(int id, string userId)
         {
             lock (_lock)
             {
                 if (!_processes.ContainsKey(id))
+                {
                     return;
+                }
 
                 if (_consumersByUser.TryGetValue(id, out var users) && !string.IsNullOrWhiteSpace(userId))
                 {
                     users.Remove(userId);
-                }
-
-                if (users != null && users.Count > 0)
-                    return;
-
-                var process = _processes[id];
-
-                try
-                {
-                    if (!process.HasExited)
+                    if (users.Count > 0)
                     {
-                        // 🔥 корректно завершаем ffmpeg
-                        process.StandardInput.WriteLine("q");
-                        process.StandardInput.Flush();
-
-                        if (!process.WaitForExit(3000))
-                        {
-                            process.Kill(entireProcessTree: true);
-                            process.WaitForExit();
-                        }
+                        _lastActivityUtc[id] = DateTime.UtcNow;
+                        return;
                     }
                 }
-                catch
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                finally
-                {
-                    process.Dispose();
-                }
 
-                _processes.Remove(id);
+                StopSlotCore(id);
+            }
+        }
+
+        private void CleanupInactiveSlots()
+        {
+            lock (_lock)
+            {
+                var now = DateTime.UtcNow;
+                var staleIds = _lastActivityUtc
+                    .Where(x => now - x.Value >= _streamInactivityTimeout)
+                    .Select(x => x.Key)
+                    .ToList();
+
+                foreach (var id in staleIds)
+                {
+                    StopSlotCore(id);
+                }
+            }
+        }
+
+        private void StopSlotCore(int id)
+        {
+            if (!_processes.TryGetValue(id, out var process))
+            {
                 _keys.Remove(id);
                 _consumersByUser.Remove(id);
-
+                _lastActivityUtc.Remove(id);
                 CleanupPlaylist(id);
+                return;
             }
+
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.StandardInput.WriteLine("q");
+                    process.StandardInput.Flush();
+
+                    if (!process.WaitForExit(3000))
+                    {
+                        process.Kill(entireProcessTree: true);
+                        process.WaitForExit();
+                    }
+                }
+            }
+            catch
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            finally
+            {
+                process.Dispose();
+            }
+
+            _processes.Remove(id);
+            _keys.Remove(id);
+            _consumersByUser.Remove(id);
+            _lastActivityUtc.Remove(id);
+
+            CleanupPlaylist(id);
         }
 
         private void CleanupPlaylist(int id)
@@ -222,14 +226,21 @@ namespace TobacoServer.Services
             try
             {
                 if (Directory.Exists(dir))
+                {
                     Directory.Delete(dir, true);
+                }
             }
             catch
             {
-                // если ОС держит хендлы — просто не падаем
+                // Ignore cleanup failures for files still being released by the OS.
             }
         }
 
         public string GetKey(int id) => _keys[id];
+
+        public void Dispose()
+        {
+            _cleanupTimer.Dispose();
+        }
     }
 }

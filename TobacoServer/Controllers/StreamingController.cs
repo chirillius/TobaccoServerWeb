@@ -47,6 +47,8 @@ namespace TobacoServer.Controllers
             var id = int.Parse(parts[0]);
             var fileName = parts.Last();
 
+            _streamingHandlerService.TouchSlotActivity(id);
+
             var dir = Path.Combine(Directory.GetCurrentDirectory(), "Playlists", id.ToString());
             var filePath = Path.Combine(dir, fileName);
 
