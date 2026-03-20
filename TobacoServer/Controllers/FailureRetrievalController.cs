@@ -24,10 +24,62 @@ namespace TobacoServer.Controllers
 
         [HttpGet]
         [Route("image")]
-        public async Task<FileResult> GetDefectImage([FromQuery] long globalId)
+        public async Task<IActionResult> GetDefectImage([FromQuery] long globalId)
         {
-            var defectImage = _db.DefectImages.First(x => x.Id == globalId);
+            var defectImage = await _db.DefectImages.FirstOrDefaultAsync(x => x.Id == globalId);
+            if (defectImage is null || string.IsNullOrWhiteSpace(defectImage.Path) || !System.IO.File.Exists(defectImage.Path))
+            {
+                return NotFound("Изображение не найдено на сервере");
+            }
+
             return PhysicalFile(defectImage.Path, "image/jpeg");
+        }
+
+        [HttpPost]
+        [Route("images-availability/{defectName}")]
+        public IActionResult GetUnavailableImageDates(string defectName, [FromBody] List<string> dates)
+        {
+            if (dates is null || dates.Count == 0)
+            {
+                return Ok(new List<string>());
+            }
+
+            var defectDirectoryName = defectName.Trim().ToLowerInvariant() switch
+            {
+                "delays" => "delays",
+                "toomanypeopleatstall" => "tooManyPeopleAtStall",
+                "smoke" => "smoke",
+                "nooneatstallfortoolong" => "noOneAtStallforTooLong",
+                "light" => "light",
+                "crowd" => "crowds",
+                "cashregister" => "cashRegister",
+                "countingcashregister" => "countingCashRegister",
+                "abandonedopencashregister" => "abandonedOpenCashRegister",
+                "humandetectionbeforeandaftershift" => "bottles",
+                "servicenearcabinet" => "serviceNearCabinet",
+                "phone" => "phones",
+                "pose" => "pose",
+                "mopping" => "mopping",
+                "clothes" => "clothes",
+                "surfaceclear" => "clearStall",
+                "bottles" => "bottles",
+                "inactivesalesman" => "inactiveSalesman",
+                "badge" => "badge",
+                _ => defectName
+            };
+
+            var imagesRoot = Path.Combine(Directory.GetCurrentDirectory(), "Images");
+            var unavailableDates = dates
+                .Where(date =>
+                {
+                    var directoryPath = Path.Combine(imagesRoot, date, defectDirectoryName);
+                    return !Directory.Exists(directoryPath);
+                })
+                .Distinct()
+                .OrderBy(date => date)
+                .ToList();
+
+            return Ok(unavailableDates);
         }
 
         [HttpPost]
@@ -36,17 +88,14 @@ namespace TobacoServer.Controllers
         {
             HttpClient client = new HttpClient();
             var response = await client.PostAsync($"{_defectImageAddress}images/false-positive/{defect}-{id}", null);
-            if (response.StatusCode == System.Net.HttpStatusCode.Created)
+            var message = await response.Content.ReadAsStringAsync();
+
+            if (string.IsNullOrWhiteSpace(message))
             {
-                return StatusCode(201);
+                return StatusCode((int)response.StatusCode);
             }
-            else if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
-            {
-                return StatusCode(204);
-            }
-            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                return StatusCode(404);
-            return StatusCode(200);
+
+            return StatusCode((int)response.StatusCode, message);
         }
 
         [HttpPost]

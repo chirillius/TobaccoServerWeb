@@ -36,7 +36,7 @@ namespace TobacoServer.Models.Jobs
                 var clientNumber = clientZones.Select(async x => await videoService.GetPeopleNumberAsync(x)).Select(x => x.Result).Sum();
                 lock (_lock)
                 {
-                    if (clientNumber >= 0)
+                    if (clientNumber > 0)
                     {
                         foreach (var zone in smokeZones)
                         {
