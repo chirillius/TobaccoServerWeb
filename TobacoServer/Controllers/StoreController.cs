@@ -13,10 +13,12 @@ namespace TobacoServer.Controllers
     public class StoreController : ControllerBase
     {
         private readonly CurrentStoreHandlingService _storeService;
+        private readonly IConfiguration _configuration;
 
-        public StoreController(CurrentStoreHandlingService storeService)
+        public StoreController(CurrentStoreHandlingService storeService, IConfiguration configuration)
         {
             _storeService = storeService;
+            _configuration = configuration;
         }
 
         [HttpGet("store")]
@@ -62,6 +64,12 @@ namespace TobacoServer.Controllers
             {
                 using var httpClient = new HttpClient();
                 var url = System.Configuration.ConfigurationManager.AppSettings["CentralServer"] + "Stores/check-store";
+                var internalApiKey = _configuration["Security:InternalApiKey"];
+
+                if (!string.IsNullOrWhiteSpace(internalApiKey))
+                {
+                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Internal-Api-Key", internalApiKey);
+                }
 
 
                 var jsonContent = JsonConvert.SerializeObject(new Store { Address = storeAddress });

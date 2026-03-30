@@ -99,13 +99,101 @@ namespace TobacoServer.Controllers
         }
 
         [HttpPost]
+        [Route("false-positive-export/start")]
+        public async Task<IActionResult> StartFalsePositiveExport()
+        {
+            using var client = new HttpClient();
+            var response = await client.PostAsync($"{_defectImageAddress}false-positive-export/start", null);
+            var message = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(message) ? null : message);
+            }
+
+            return Content(message, "application/json");
+        }
+
+        [HttpGet]
+        [Route("false-positive-export/status/{exportId}")]
+        public async Task<IActionResult> GetFalsePositiveExportStatus(string exportId)
+        {
+            using var client = new HttpClient();
+            var response = await client.GetAsync($"{_defectImageAddress}false-positive-export/status/{exportId}");
+            var message = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(message) ? null : message);
+            }
+
+            return Content(message, "application/json");
+        }
+
+        [HttpGet]
+        [Route("false-positive-export/download/{exportId}")]
+        public async Task<IActionResult> DownloadFalsePositiveExport(string exportId)
+        {
+            var client = new HttpClient();
+            var response = await client.GetAsync(
+                $"{_defectImageAddress}false-positive-export/download/{exportId}",
+                HttpCompletionOption.ResponseHeadersRead);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = await response.Content.ReadAsStringAsync();
+                response.Dispose();
+                client.Dispose();
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(message) ? null : message);
+            }
+
+            var stream = await response.Content.ReadAsStreamAsync();
+            HttpContext.Response.OnCompleted(async () =>
+            {
+                stream.Dispose();
+                response.Dispose();
+                client.Dispose();
+                await Task.CompletedTask;
+            });
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/zip";
+            var fileName = response.Content.Headers.ContentDisposition?.FileNameStar
+                           ?? response.Content.Headers.ContentDisposition?.FileName
+                           ?? $"FalsePositives-{DateTime.Now:dd-MM-yyyy_HH-mm-ss}.zip";
+            fileName = fileName.Trim('"');
+
+            return File(stream, contentType, fileName);
+        }
+
+        [HttpPost]
+        [Route("false-positive-export/finalize/{exportId}")]
+        public async Task<IActionResult> FinalizeFalsePositiveExport(string exportId)
+        {
+            using var client = new HttpClient();
+            var response = await client.PostAsync($"{_defectImageAddress}false-positive-export/finalize/{exportId}", null);
+            var message = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return StatusCode((int)response.StatusCode, string.IsNullOrWhiteSpace(message) ? null : message);
+            }
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return StatusCode((int)response.StatusCode);
+            }
+
+            return Content(message, "application/json");
+        }
+
+        [HttpPost]
         [Route("verified/{defect}-{id}")]
         public async Task<IActionResult> MarkDefectAsVerified(string defect, long id)
         {
             var normalizedDefect = defect.Trim().ToLowerInvariant();
             var updated = normalizedDefect switch
             {
-                "delays" => await MarkVerifiedAsync(_db.Delays.FirstOrDefaultAsync(x => x.Id == id)),
+                "delay" => await MarkVerifiedAsync(_db.Delays.FirstOrDefaultAsync(x => x.Id == id)),
                 "toomanypeopleatstall" => await MarkVerifiedAsync(_db.TooManyPeopleAtStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "smoke" => await MarkVerifiedAsync(_db.SmokeFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "nooneatstallfortoolong" => await MarkVerifiedAsync(_db.NoOneAtStallForTooLongFailures.FirstOrDefaultAsync(x => x.Id == id)),
@@ -120,8 +208,8 @@ namespace TobacoServer.Controllers
                 "pose" => await MarkVerifiedAsync(_db.PoseFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "mopping" => await MarkVerifiedAsync(_db.MoppingFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "clothes" => await MarkVerifiedAsync(_db.ClothesControlFailures.FirstOrDefaultAsync(x => x.Id == id)),
-                "surfaceclear" => await MarkVerifiedAsync(_db.ClearStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
-                "bottles" => await MarkVerifiedAsync(_db.BottleFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "clearstall" => await MarkVerifiedAsync(_db.ClearStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "bottle" => await MarkVerifiedAsync(_db.BottleFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "inactivesalesman" => await MarkVerifiedAsync(_db.InactiveSalesmanFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "badge" => await MarkVerifiedAsync(_db.BadgeFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 _ => false
@@ -133,6 +221,10 @@ namespace TobacoServer.Controllers
             }
 
             await _db.SaveChangesAsync();
+            using (var client = new HttpClient())
+            {
+                await client.DeleteAsync($"{_defectImageAddress}images/{defect}-{id}");
+            }
             return NoContent();
         }
 

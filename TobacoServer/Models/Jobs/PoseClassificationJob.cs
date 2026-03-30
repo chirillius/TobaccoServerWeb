@@ -1,8 +1,5 @@
-﻿using Microsoft.IdentityModel.Tokens;
-using NAudio.SoundFont;
-using OpenCvSharp;
+﻿using OpenCvSharp;
 using Quartz;
-using System.Drawing.Text;
 using TobaccoEntities.Models;
 using TobacoServer.Models.DbContext;
 using TobacoServer.Models.ImageSavers;
@@ -15,54 +12,44 @@ namespace TobacoServer.Models.Jobs
     public class PoseClassificationJob : IJob
     {
         private readonly DefectImageService _defectImageService = new DefectImageService();
-        private string _imagePath;
-        private static List<string> _allImagesPaths = new List<string>();
-        private static Dictionary<string, string> _cachedImagesPaths = new Dictionary<string, string>();
         private static bool _isRunning = false;
-        private static Dictionary<DateTime, string> _imagesCounter = new Dictionary<DateTime, string>();
-        private static object _lock = new object();
-        private static List<Mat> _cachedImages = new List<Mat>();
+        private static readonly object _lock = new object();
+
         public async Task Execute(IJobExecutionContext context)
         {
             var logger = context.MergedJobDataMap["logger"] as ILogger;
+
             try
             {
                 var dbScope = context.MergedJobDataMap["appDbContextScope"] as IServiceScope;
-                var db = dbScope.ServiceProvider.GetService<AppDbContext>();
+                var db = dbScope?.ServiceProvider.GetService<AppDbContext>();
                 var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
                 var timeOffsetInMilliseconds = int.Parse(context.MergedJobDataMap["timeOffsetInMilliseconds"].ToString());
                 var lengthOfSamplesListToAverage = int.Parse(context.MergedJobDataMap["lengthOfSamplesListToAverage"].ToString());
                 var timeDelta = int.Parse(context.MergedJobDataMap["timeDelta"].ToString());
+                var zoneNamePart = context.MergedJobDataMap["zoneNamePart"].ToString().ToLower();
+                var clientZoneNamePart = context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower();
+
                 var zonesConfigurator = new ZonesConfigurator();
                 var zones = zonesConfigurator.GetZones();
-                var poseZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["zoneNamePart"].ToString().ToLower())).ToList();
-                var clientZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower())).ToList();
+                var poseZones = zones.Where(x => x.Name.ToLower().Contains(zoneNamePart)).ToList();
+                var clientZones = zones.Where(x => x.Name.ToLower().Contains(clientZoneNamePart)).ToList();
 
-                var stallZonePeopleNumber = poseZones.Sum(x => videoService.GetPeopleNumberAsync(x).Result);
-                if (stallZonePeopleNumber == 0)
+                if (db is null || videoService is null || poseZones.Count == 0 || clientZones.Count == 0)
                 {
                     return;
                 }
 
-                var totalClientsNumber = clientZones.Sum(x => videoService.GetPeopleNumberAsync(x).Result);
-                if (totalClientsNumber == 0)
+                var posePeopleNumber = GetPeopleNumber(videoService, poseZones);
+                var clientPeopleNumber = GetPeopleNumber(videoService, clientZones);
+
+                if (clientPeopleNumber == 0)
                 {
-                    if (_isRunning)
-                    {
-                        lock (_lock)
-                        {
-                            _isRunning = false;
-                            _cachedImages.ForEach(x => x.Dispose());
-                            _cachedImages.Clear();
-                            _imagesCounter.Clear();
-                            _allImagesPaths.Clear();
-                            _cachedImagesPaths.Clear();
-                        }
-                    }
+                    ResetRunningState();
                     return;
                 }
 
-                if (_isRunning)
+                if (posePeopleNumber == 0)
                 {
                     return;
                 }
@@ -70,12 +57,6 @@ namespace TobacoServer.Models.Jobs
                 lock (_lock)
                 {
                     if (_isRunning)
-                    {
-                        return;
-                    }
-
-                    totalClientsNumber = clientZones.Sum(x => videoService.GetPeopleNumberAsync(x).Result);
-                    if (totalClientsNumber == 0)
                     {
                         return;
                     }
@@ -83,79 +64,108 @@ namespace TobacoServer.Models.Jobs
                     _isRunning = true;
                 }
 
-
                 Thread.Sleep(timeOffsetInMilliseconds);
+
+                clientPeopleNumber = GetPeopleNumber(videoService, clientZones);
+                if (clientPeopleNumber == 0)
+                {
+                    ResetRunningState();
+                    return;
+                }
 
                 foreach (var zone in poseZones)
                 {
-                    var imagePathsResult = new Dictionary<DateTime, string>();
+                    if (videoService.GetPeopleNumberAsync(zone).Result <= 0)
+                    {
+                        continue;
+                    }
+
+                    var sampledImages = new Dictionary<DateTime, string>();
+
                     for (var i = 0; i < lengthOfSamplesListToAverage; i++)
                     {
-                        var currentClients = clientZones.Sum(x => videoService.GetPeopleNumberAsync(x).Result);
-                        if (currentClients == 0)
+                        if (GetPeopleNumber(videoService, clientZones) == 0)
                         {
+                            ResetRunningState();
                             return;
                         }
 
                         if (videoService.GetPeopleNumberAsync(zone).Result > 0)
                         {
-                            _imagePath = videoService.IsPoseDetectedAsync(zone).Result;
-                            imagePathsResult.Add(DateTime.Now, _imagePath);
+                            var detectedImagePath = videoService.IsPoseDetectedAsync(zone).Result;
+                            if (!string.IsNullOrWhiteSpace(detectedImagePath))
+                            {
+                                sampledImages[DateTime.Now.AddTicks(i)] = detectedImagePath;
+                            }
                         }
+
                         Thread.Sleep(timeDelta);
                     }
 
-                    if (imagePathsResult.Count > 0)
+                    if (sampledImages.Count == 0)
                     {
-                        var poseCounter = imagePathsResult.Count(x => x.Value.Contains("sitting"));
-                        if (poseCounter >= Math.Ceiling(imagePathsResult.Count / 2.0))
+                        continue;
+                    }
+
+                    var sittingImages = sampledImages
+                        .Where(x => x.Value.Contains("sitting", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+                    if (sittingImages.Count < Math.Ceiling(sampledImages.Count / 2.0))
+                    {
+                        continue;
+                    }
+
+                    var lastSittingImagePath = sittingImages.Last().Value;
+                    var selectedImages = await _defectImageService.GetImageWithResultAsync(new List<string> { lastSittingImagePath });
+                    var cachedImages = new List<Mat>();
+
+                    try
+                    {
+                        cachedImages.AddRange(selectedImages);
+
+                        using var grid = DefectImagesSaver.CreateImageGrid(cachedImages);
+                        var path = DefectImagesSaver.Save("Grid", grid, "pose");
+                        var failure = new PoseFailure()
                         {
-                            foreach (var count in imagePathsResult)
-                            {
-                                if (count.Value.Contains("sitting"))
-                                {
-                                    _imagesCounter[count.Key] = count.Value;
-                                }
-                                _allImagesPaths.Add(count.Value);
-                            }
-                            _cachedImagesPaths[zone.CameraAddress] = _imagesCounter.Last().Value;
+                            DateTime = sittingImages.First().Key,
+                            DefectImage = new DefectImage() { Path = path }
+                        };
 
-                            var images = await _defectImageService.GetImageWithResultAsync(_cachedImagesPaths.Values.ToList());
-                            foreach (var image in images)
-                            {
-                                _cachedImages.Add(image);
-                            }
-                            using var grid = DefectImagesSaver.CreateImageGrid(_cachedImages);
-                            var path = DefectImagesSaver.Save("Grid", grid, "pose");
-                            var failure = new PoseFailure()
-                            {
-                                DateTime = _imagesCounter.First().Key,
-                                DefectImage = new DefectImage() { Path = path }
-                            };
-                            db.PoseFailures.Add(failure);
-                            db.SaveChanges();
+                        db.PoseFailures.Add(failure);
+                        db.SaveChanges();
 
-                            await _defectImageService.MoveDefectImagesAsync(failure.Name, failure.Id, _allImagesPaths);
+                        await _defectImageService.MoveDefectImagesAsync(
+                            failure.Name,
+                            failure.Id,
+                            sampledImages.Values.Distinct().ToList());
 
-                            _imagesCounter.Clear();
-                            _cachedImages.ForEach(x => x.Dispose());
-                            _cachedImages.Clear();
-                            _allImagesPaths.Clear();
-                            _cachedImagesPaths.Clear();
-                        }
+                        return;
+                    }
+                    finally
+                    {
+                        cachedImages.ForEach(x => x.Dispose());
                     }
                 }
             }
-
             catch (Exception ex)
             {
-                lock (_lock)
-                {
-                    _isRunning = false;
-                }
-                logger.LogJobError(ex, "PoseClassificationJob");
+                ResetRunningState();
+                logger?.LogJobError(ex, "PoseClassificationJob");
             }
         }
 
+        private static int GetPeopleNumber(VideoCacheService videoService, List<Zone> zones)
+        {
+            return zones.Sum(x => videoService.GetPeopleNumberAsync(x).Result);
+        }
+
+        private static void ResetRunningState()
+        {
+            lock (_lock)
+            {
+                _isRunning = false;
+            }
+        }
     }
 }
