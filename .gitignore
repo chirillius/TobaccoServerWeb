@@ -1,10 +1,14 @@
 # Build outputs
 bin/
 obj/
+**/obj
+**/bin
 **/Videos
 **/Archives
 **/Configuration
 **/Images
+**/info_log.txt
+**/error_log.txt
 
 # Visual Studio / Rider / VS Code
 **/.vs/
