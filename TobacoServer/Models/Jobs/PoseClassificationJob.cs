@@ -13,6 +13,7 @@ namespace TobacoServer.Models.Jobs
     {
         private readonly DefectImageService _defectImageService = new DefectImageService();
         private static bool _isRunning = false;
+        private static bool _isExecutionInProgress = false;
         private static readonly object _lock = new object();
 
         public async Task Execute(IJobExecutionContext context)
@@ -40,36 +41,51 @@ namespace TobacoServer.Models.Jobs
                     return;
                 }
 
+                if (!TryEnterExecution())
+                {
+                    return;
+                }
+
                 var posePeopleNumber = GetPeopleNumber(videoService, poseZones);
                 var clientPeopleNumber = GetPeopleNumber(videoService, clientZones);
 
-                if (clientPeopleNumber == 0)
+                if (IsScenarioRunning())
                 {
-                    ResetRunningState();
-                    return;
-                }
-
-                if (posePeopleNumber == 0)
-                {
-                    return;
-                }
-
-                lock (_lock)
-                {
-                    if (_isRunning)
+                    if (await IsClientMissingConfirmedAsync(videoService, clientZones))
                     {
-                        return;
+                        ResetRunningState();
                     }
-
-                    _isRunning = true;
+                    return;
                 }
 
-                Thread.Sleep(timeOffsetInMilliseconds);
+                if (posePeopleNumber == 0 || clientPeopleNumber == 0)
+                {
+                    return;
+                }
+
+                if (!TryStartScenario())
+                {
+                    return;
+                }
+
+                if (GetPeopleNumber(videoService, clientZones) == 0)
+                {
+                    if (await IsClientMissingConfirmedAsync(videoService, clientZones))
+                    {
+                        ResetRunningState();
+                    }
+                    return;
+                }
+
+                await Task.Delay(timeOffsetInMilliseconds);
 
                 clientPeopleNumber = GetPeopleNumber(videoService, clientZones);
                 if (clientPeopleNumber == 0)
                 {
-                    ResetRunningState();
+                    if (await IsClientMissingConfirmedAsync(videoService, clientZones))
+                    {
+                        ResetRunningState();
+                    }
                     return;
                 }
 
@@ -86,7 +102,10 @@ namespace TobacoServer.Models.Jobs
                     {
                         if (GetPeopleNumber(videoService, clientZones) == 0)
                         {
-                            ResetRunningState();
+                            if (await IsClientMissingConfirmedAsync(videoService, clientZones))
+                            {
+                                ResetRunningState();
+                            }
                             return;
                         }
 
@@ -99,7 +118,7 @@ namespace TobacoServer.Models.Jobs
                             }
                         }
 
-                        Thread.Sleep(timeDelta);
+                        await Task.Delay(timeDelta);
                     }
 
                     if (sampledImages.Count == 0)
@@ -153,6 +172,10 @@ namespace TobacoServer.Models.Jobs
                 ResetRunningState();
                 logger?.LogJobError(ex, "PoseClassificationJob");
             }
+            finally
+            {
+                ExitExecution();
+            }
         }
 
         private static int GetPeopleNumber(VideoCacheService videoService, List<Zone> zones)
@@ -166,6 +189,70 @@ namespace TobacoServer.Models.Jobs
             {
                 _isRunning = false;
             }
+        }
+
+        private static bool TryEnterExecution()
+        {
+            lock (_lock)
+            {
+                if (_isExecutionInProgress)
+                {
+                    return false;
+                }
+
+                _isExecutionInProgress = true;
+                return true;
+            }
+        }
+
+        private static void ExitExecution()
+        {
+            lock (_lock)
+            {
+                _isExecutionInProgress = false;
+            }
+        }
+
+        private static bool IsScenarioRunning()
+        {
+            lock (_lock)
+            {
+                return _isRunning;
+            }
+        }
+
+        private static bool TryStartScenario()
+        {
+            lock (_lock)
+            {
+                if (_isRunning)
+                {
+                    return false;
+                }
+
+                _isRunning = true;
+                return true;
+            }
+        }
+
+        private static async Task<bool> IsClientMissingConfirmedAsync(
+            VideoCacheService videoService,
+            List<Zone> clientZones)
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                if (GetPeopleNumber(videoService, clientZones) > 0)
+                {
+                    return false;
+                }
+
+                if (i < 2)
+                {
+                    await Task.Delay(2000);
+                }
+            }
+
+            return true;
         }
     }
 }

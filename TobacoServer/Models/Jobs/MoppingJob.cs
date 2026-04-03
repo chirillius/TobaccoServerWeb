@@ -42,7 +42,11 @@ namespace TobacoServer.Models.Jobs
                             DefectImage = new DefectImage()
                         };
                         var defectName = failure.Name;
-                        _defectImageService.MoveDefectImagesWithDateAsync(defectName, DateTime.Now.ToString("dd-MM-yyyy:HH-mm-ss-ffff"), _imagesCounter.Values.ToList()).Wait();
+                        var falsePositiveDate = DateTime.Now.ToString("dd-MM-yyyy");
+                        _defectImageService.MoveImagesToFalsePositiveWithDateAsync(
+                            defectName,
+                            falsePositiveDate,
+                            _imagesCounter.Values.ToList()).Wait();
                         if (!_wasMoppingDetected)
                         {
                             _ = db.MoppingFailures.Add(failure);
@@ -50,7 +54,7 @@ namespace TobacoServer.Models.Jobs
                             count = 0;
                             return;
                         }
-                       
+
                         _imagesCounter.Clear();
                         _wasMoppingDetected = false;
                     }

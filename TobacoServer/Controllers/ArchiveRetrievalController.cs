@@ -41,6 +41,61 @@ namespace TobacoServer.Controllers
 
 
         [HttpGet]
+        [Route("live-archive/available-dates")]
+        public IActionResult GetLiveArchiveAvailableDates()
+        {
+            if (!Directory.Exists(_videosDirectory))
+            {
+                return Ok(new
+                {
+                    dates = Array.Empty<string>(),
+                    availability = new Dictionary<string, string[]>()
+                });
+            }
+
+            var availability = new Dictionary<string, string[]>();
+
+            foreach (var dateDirectory in Directory.GetDirectories(_videosDirectory))
+            {
+                var directoryName = Path.GetFileName(dateDirectory);
+                if (!DateTime.TryParseExact(directoryName, "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+                {
+                    continue;
+                }
+
+                var originDirectory = Path.Combine(dateDirectory, "origin");
+                if (!Directory.Exists(originDirectory))
+                {
+                    continue;
+                }
+
+                var cameras = Directory.GetDirectories(originDirectory)
+                    .Select(Path.GetFileName)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct()
+                    .OrderBy(x => x)
+                    .ToArray();
+
+                if (cameras.Length == 0)
+                {
+                    continue;
+                }
+
+                availability[parsedDate.ToString("yyyy-MM-dd")] = cameras!;
+            }
+
+            var dates = availability.Keys
+                .OrderByDescending(x => x)
+                .ToArray();
+
+            return Ok(new
+            {
+                dates,
+                availability
+            });
+        }
+
+        [HttpGet]
         [Route("live-archive/merge/{cameraName}")]
         public async Task<IActionResult> Merge(string cameraName, [FromQuery] DateTime startDateTime, DateTime endDateTime)
         {

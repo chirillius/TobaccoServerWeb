@@ -100,9 +100,17 @@ namespace TobacoServer.Services
         {
             var response = await client.PostAsJsonAsync(Path.Combine(_defectImageAddress, $"images/move-date/{defect}-{date}"), imagePaths);
         }
+
+        public async Task MoveImagesToFalsePositiveWithDateAsync(string defect, string date, List<string> imagePaths)
+        {
+            var response = await client.PostAsJsonAsync(
+                Path.Combine(_defectImageAddress, $"images/move-false-positive-date/{defect}-{date}"),
+                imagePaths);
+        }
+
         public async Task MoveDefectImagesAsync(string defect, long id, List<string> imagePaths)
         {
             var response = await client.PostAsJsonAsync(Path.Combine(_defectImageAddress, $"images/move/{defect}-{id}"), imagePaths);
         }
-    }   
+    }
 }
