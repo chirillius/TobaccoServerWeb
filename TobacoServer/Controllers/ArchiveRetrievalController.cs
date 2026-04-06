@@ -24,6 +24,10 @@ namespace TobacoServer.Controllers
     {
         private static object _zipLock = new object();
         private static List<string> _runningZips = new List<string>();
+        private static ConcurrentDictionary<string, int> _activeZipDownloads = new ConcurrentDictionary<string, int>();
+        private static ConcurrentDictionary<string, string> _mergeOwners = new ConcurrentDictionary<string, string>();
+        private static ConcurrentDictionary<string, string> _zipOwners = new ConcurrentDictionary<string, string>();
+        private static ConcurrentDictionary<string, CancellationTokenSource> _zipCancellationTokens = new ConcurrentDictionary<string, CancellationTokenSource>();
         private string _videosDirectory = Path.Combine(Directory.GetCurrentDirectory(), System.Configuration.ConfigurationManager.AppSettings["VideosDirectory"]);
         private string _tempDirectory = Path.Combine(Directory.GetCurrentDirectory(), System.Configuration.ConfigurationManager.AppSettings["TempDirectory"]);
         private string _archivesDirectory = Path.Combine(Directory.GetCurrentDirectory(), System.Configuration.ConfigurationManager.AppSettings["ArchivesDirectory"]);
@@ -37,6 +41,91 @@ namespace TobacoServer.Controllers
             Directory.CreateDirectory(_tempDirectory);
             _logger = logger;
             _scope = serviceProvider.CreateScope();
+        }
+
+        private static bool IsZipBuilding(string zipPath)
+        {
+            lock (_zipLock)
+            {
+                return _runningZips.Contains(zipPath);
+            }
+        }
+
+        private static void MarkZipBuilding(string zipPath)
+        {
+            lock (_zipLock)
+            {
+                if (!_runningZips.Contains(zipPath))
+                {
+                    _runningZips.Add(zipPath);
+                }
+            }
+        }
+
+        private static void UnmarkZipBuilding(string zipPath)
+        {
+            lock (_zipLock)
+            {
+                _runningZips.Remove(zipPath);
+            }
+        }
+
+        private static bool IsZipDownloading(string zipPath)
+        {
+            return _activeZipDownloads.TryGetValue(zipPath, out var count) && count > 0;
+        }
+
+        private IActionResult? GetZipBusyResult(string zipPath)
+        {
+            if (IsZipBuilding(zipPath))
+            {
+                return Conflict("Архив в данный момент собирается другим клиентом.");
+            }
+
+            if (IsZipDownloading(zipPath))
+            {
+                return Conflict("Архив в данный момент скачивается другим клиентом.");
+            }
+
+            return null;
+        }
+
+        private static string? NormalizeClientRequestId(string? clientRequestId)
+        {
+            var normalized = clientRequestId?.Trim();
+            return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+        }
+
+        private static bool IsOwnedByCurrentClient(ConcurrentDictionary<string, string> owners, string key, string? clientRequestId)
+        {
+            var normalizedClientRequestId = NormalizeClientRequestId(clientRequestId);
+            if (normalizedClientRequestId is null)
+            {
+                return false;
+            }
+
+            return owners.TryGetValue(key, out var owner) &&
+                   string.Equals(owner, normalizedClientRequestId, StringComparison.Ordinal);
+        }
+
+        private static void ClearMergeOwnerIfCompleted(string outputPath)
+        {
+            if (!ArchiveHelper.IsMergeRunning(outputPath))
+            {
+                _mergeOwners.TryRemove(outputPath, out _);
+            }
+        }
+
+        private static void ClearZipOwnerIfCompleted(string zipPath)
+        {
+            if (!IsZipBuilding(zipPath))
+            {
+                _zipOwners.TryRemove(zipPath, out _);
+                if (_zipCancellationTokens.TryRemove(zipPath, out var cancellationTokenSource))
+                {
+                    cancellationTokenSource.Dispose();
+                }
+            }
         }
 
 
@@ -228,8 +317,15 @@ namespace TobacoServer.Controllers
         [Route("archive/checkZip")]
         public async Task<IActionResult> CheckZip([FromBody] List<DateTime> listStartDateTime)
         {
-            var zipPath = $"{_archivesDirectory}/" +
-            $"{listStartDateTime.First().ToString("dd-MM-yyyy")}_{listStartDateTime.Last().ToString("dd-MM-yyyy")}.zip";
+            var zipPath = Path.Combine(
+                _archivesDirectory,
+                $"{listStartDateTime.First():dd-MM-yyyy}_{listStartDateTime.Last():dd-MM-yyyy}.zip");
+
+            var busyResult = GetZipBusyResult(zipPath);
+            if (busyResult is not null)
+            {
+                return busyResult;
+            }
 
             if (System.IO.File.Exists(zipPath))
             {
@@ -239,32 +335,65 @@ namespace TobacoServer.Controllers
             return StatusCode(404);
         }
 
+        [HttpGet]
+        [Route("archive/info")]
+        public IActionResult GetZipInfo([FromQuery] string zipPath)
+        {
+            if (string.IsNullOrWhiteSpace(zipPath))
+            {
+                return BadRequest("Путь к архиву не указан.");
+            }
+
+            if (IsZipBuilding(zipPath))
+            {
+                return Conflict("Архив в данный момент ещё собирается.");
+            }
+
+            if (!System.IO.File.Exists(zipPath))
+            {
+                return NotFound("Архив не найден на сервере.");
+            }
+
+            var fileInfo = new FileInfo(zipPath);
+            return Ok(new
+            {
+                size = fileInfo.Length
+            });
+        }
+
         [HttpPost]
         [Route("archive/deleteZip")]
         public async Task<IActionResult> DeleteZip([FromBody] List<DateTime> listStartDateTime)
         {
-            var zipPath = $"{_archivesDirectory}/" +
-            $"{listStartDateTime.First().ToString("dd-MM-yyyy")}_{listStartDateTime.Last().ToString("dd-MM-yyyy")}.zip";
+            var zipPath = Path.Combine(
+                _archivesDirectory,
+                $"{listStartDateTime.First():dd-MM-yyyy}_{listStartDateTime.Last():dd-MM-yyyy}.zip");
+
+            var busyResult = GetZipBusyResult(zipPath);
+            if (busyResult is not null)
+            {
+                return busyResult;
+            }
 
             if (!System.IO.File.Exists(zipPath))
             {
-                return StatusCode(404);
+                return NotFound("Архив не найден на сервере.");
             }
 
             try
             {
                 System.IO.File.Delete(zipPath);
-                return Ok();
+                return Ok("Архив удалён.");
             }
             catch (Exception ex)
             {
-                return StatusCode(500);
+                return StatusCode(500, $"Не удалось удалить архив: {ex.Message}");
             }
         }
 
         [HttpPost]
         [Route("archive/merge/{cameraName}")]
-        public async Task<IActionResult> MergeArchive(string cameraName, [FromBody] List<DateTime> neededDates)
+        public async Task<IActionResult> MergeArchive(string cameraName, [FromBody] List<DateTime> neededDates, [FromQuery] string? clientRequestId = null, [FromQuery] bool waitForExisting = false)
         {
             try
             {
@@ -304,9 +433,15 @@ namespace TobacoServer.Controllers
                     var cameraArchiveFolder = Path.Combine(_archivesDirectory, date, "origin", cameraName);
                     var reservedDirectoryPath = Path.Combine(_archivesDirectory, date);
                     var outputPath = Path.Combine(cameraArchiveFolder, $"{cameraName}_{date}.mp4");
+                    ClearMergeOwnerIfCompleted(outputPath);
                     if (ArchiveHelper.IsMergeRunning(outputPath))
                     {
-                        return StatusCode(202, "Merge operation is already running.");
+                        if (IsOwnedByCurrentClient(_mergeOwners, outputPath, clientRequestId) || waitForExisting)
+                        {
+                            return StatusCode(202, "Архив за выбранную дату ещё собирается.");
+                        }
+
+                        return Conflict("Архив за выбранную дату уже собирается другим клиентом.");
                     }
 
                     var currentDate = DateTime.ParseExact(date, "dd-MM-yyyy", CultureInfo.InvariantCulture);
@@ -331,15 +466,21 @@ namespace TobacoServer.Controllers
 
                     if (!System.IO.File.Exists(outputPath))
                     {
+                        var normalizedClientRequestId = NormalizeClientRequestId(clientRequestId);
+                        if (normalizedClientRequestId is not null)
+                        {
+                            _mergeOwners[outputPath] = normalizedClientRequestId;
+                        }
 
                         ArchiveHelper.StartSendingHeartbeat(reservedDirectoryPath, TrackingType.Folder);
                         ArchiveHelper.RequestPurgeIfNeeded(totalFoldersLength);
 
                         _ = ArchiveHelper.MergeVideosAsync(paths, outputPath, Directory.GetCurrentDirectory());
-                        return StatusCode(202, "Merge operation started.");
+                        return StatusCode(202, "Склейка архива запущена.");
                     }
 
                     ArchiveHelper.StopSendingHeartbeat(reservedDirectoryPath);
+                    _mergeOwners.TryRemove(outputPath, out _);
 
                     foreach (var pathToVideoFolder in foldersForBlocking)
                     {
@@ -358,7 +499,7 @@ namespace TobacoServer.Controllers
 
         [HttpPost]
         [Route("time-archive/merge/{cameraName}")]
-        public async Task<IActionResult> MergeArchive(string cameraName, [FromQuery] DateTime date, [FromQuery] DateTime startTime, [FromQuery] DateTime endTime)
+        public async Task<IActionResult> MergeArchive(string cameraName, [FromQuery] DateTime date, [FromQuery] DateTime startTime, [FromQuery] DateTime endTime, [FromQuery] string? clientRequestId = null, [FromQuery] bool waitForExisting = false)
         {
             try
             {
@@ -381,9 +522,15 @@ namespace TobacoServer.Controllers
 
                 var reservedDirectoryPath = Path.Combine(_archivesDirectory, dateToString);
                 var outputPath = Path.Combine(cameraArchiveFolder, $"{startTime.ToString("HH-mm-ss")}_{endTime.ToString("HH-mm-ss")}.mp4");
+                ClearMergeOwnerIfCompleted(outputPath);
                 if (ArchiveHelper.IsMergeRunning(outputPath))
                 {
-                    return StatusCode(202, "Merge operation is already running.");
+                    if (IsOwnedByCurrentClient(_mergeOwners, outputPath, clientRequestId) || waitForExisting)
+                    {
+                        return StatusCode(202, "Архив за выбранный интервал ещё собирается.");
+                    }
+
+                    return Conflict("Архив за выбранный интервал уже собирается другим клиентом.");
                 }
 
                 if (Directory.Exists(cameraArchiveFolder))
@@ -406,16 +553,22 @@ namespace TobacoServer.Controllers
 
                 if (!System.IO.File.Exists(outputPath))
                 {
+                    var normalizedClientRequestId = NormalizeClientRequestId(clientRequestId);
+                    if (normalizedClientRequestId is not null)
+                    {
+                        _mergeOwners[outputPath] = normalizedClientRequestId;
+                    }
 
                     ArchiveHelper.StartSendingHeartbeat(reservedDirectoryPath, TrackingType.Folder);
                     ArchiveHelper.RequestPurgeIfNeeded(totalFoldersLength);
 
                     _ = ArchiveHelper.MergeVideosAsync(paths, outputPath, Directory.GetCurrentDirectory());
-                    return StatusCode(202, "Merge operation started.");
+                    return StatusCode(202, "Склейка архива запущена.");
                 }
 
                 ArchiveHelper.StopSendingHeartbeat(reservedDirectoryPath);
                 ArchiveHelper.StopSendingHeartbeat(folderForBlocking);
+                _mergeOwners.TryRemove(outputPath, out _);
 
                 return Ok();
             }
@@ -431,14 +584,30 @@ namespace TobacoServer.Controllers
 
         [HttpPost]
         [Route("archive/add-to-zip")]
-        public async Task<IActionResult> AddToZipArchiveAsync([FromBody] List<DateTime> neededDates)
+        public async Task<IActionResult> AddToZipArchiveAsync([FromBody] List<DateTime> neededDates, [FromQuery] string? clientRequestId = null, [FromQuery] bool waitForExisting = false)
         {
-            var zipPath = $"{_archivesDirectory}/" +
-            $"{neededDates.First().ToString("dd-MM-yyyy")}_{neededDates.Last().ToString("dd-MM-yyyy")}.zip";
+            var zipPath = Path.Combine(
+                _archivesDirectory,
+                $"{neededDates.First():dd-MM-yyyy}_{neededDates.Last():dd-MM-yyyy}.zip");
 
-            if (_runningZips.Contains(zipPath))
+            ClearZipOwnerIfCompleted(zipPath);
+            if (IsZipBuilding(zipPath))
             {
-                return StatusCode(202);
+                if (IsOwnedByCurrentClient(_zipOwners, zipPath, clientRequestId) || waitForExisting)
+                {
+                    return StatusCode(202, "Архив уже собирается.");
+                }
+
+                return Conflict("Архив за выбранный период уже собирается другим клиентом.");
+            }
+
+            if (IsZipDownloading(zipPath))
+            {
+                if (waitForExisting)
+                {
+                    return StatusCode(202, "Архив в данный момент скачивается другим клиентом.");
+                }
+                return Conflict("Архив в данный момент скачивается другим клиентом.");
             }
 
             if (!System.IO.File.Exists(zipPath))
@@ -473,28 +642,74 @@ namespace TobacoServer.Controllers
 
                 if (directoriesToZip.Count > 0)
                 {
+                    MarkZipBuilding(zipPath);
+                    var normalizedClientRequestId = NormalizeClientRequestId(clientRequestId);
+                    if (normalizedClientRequestId is not null)
+                    {
+                        _zipOwners[zipPath] = normalizedClientRequestId;
+                    }
+                    var cancellationTokenSource = new CancellationTokenSource();
+                    _zipCancellationTokens[zipPath] = cancellationTokenSource;
                     _ = Task.Run(() =>
                     {
-                        var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create);
-                        ArchiveHelper.StartSendingHeartbeat(zipPath, TrackingType.File);
-                        foreach (var directory in directoriesToZip)
+                        try
                         {
-                            lock (_zipLock)
+                            using var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+                            ArchiveHelper.StartSendingHeartbeat(zipPath, TrackingType.File);
+                            foreach (var directory in directoriesToZip)
                             {
-                                _runningZips.Add(zipPath);
-                            }
-                            ArchiveHelper.AddDirectoryToZip(zip, directory, $"{directory.Split(@"\").Last()}");
-                            lock (_zipLock)
-                            {
-                                _runningZips.Remove(zipPath);
+                                cancellationTokenSource.Token.ThrowIfCancellationRequested();
+                                ArchiveHelper.AddDirectoryToZip(zip, directory, $"{directory.Split(@"\").Last()}");
                             }
                         }
-                        zip.Dispose();
+                        catch (OperationCanceledException)
+                        {
+                        }
+                        finally
+                        {
+                            ArchiveHelper.StopSendingHeartbeat(zipPath);
+                            UnmarkZipBuilding(zipPath);
+                            _zipOwners.TryRemove(zipPath, out _);
+                            if (_zipCancellationTokens.TryRemove(zipPath, out var existingTokenSource))
+                            {
+                                existingTokenSource.Dispose();
+                            }
+
+                            if (cancellationTokenSource.IsCancellationRequested)
+                            {
+                                try
+                                {
+                                    if (System.IO.File.Exists(zipPath))
+                                    {
+                                        System.IO.File.Delete(zipPath);
+                                    }
+                                }
+                                catch
+                                {
+                                }
+                            }
+
+                            foreach (var directory in directoriesToZip)
+                            {
+                                ArchiveHelper.StopSendingHeartbeat(directory);
+                            }
+                        }
                     });
                     return StatusCode(202);
 
                 }
             }
+
+            if (IsZipBuilding(zipPath))
+            {
+                return StatusCode(202, "Архив ещё собирается.");
+            }
+
+            if (IsZipDownloading(zipPath))
+            {
+                return Conflict("Архив в данный момент скачивается другим клиентом.");
+            }
+
             var dates = neededDates.Select(x => x.ToString("dd-MM-yyyy")).ToList();
 
             var archiveDirectories = Directory
@@ -508,6 +723,45 @@ namespace TobacoServer.Controllers
             }
             return Ok(zipPath);
 
+        }
+
+        [HttpPost]
+        [Route("archive/cancel-add-to-zip")]
+        public IActionResult CancelAddToZipArchive([FromBody] List<DateTime> neededDates, [FromQuery] string? clientRequestId = null)
+        {
+            var zipPath = Path.Combine(
+                _archivesDirectory,
+                $"{neededDates.First():dd-MM-yyyy}_{neededDates.Last():dd-MM-yyyy}.zip");
+
+            ClearZipOwnerIfCompleted(zipPath);
+
+            if (IsZipBuilding(zipPath))
+            {
+                if (!IsOwnedByCurrentClient(_zipOwners, zipPath, clientRequestId))
+                {
+                    return Conflict("Архив собирается другим клиентом и не может быть отменён.");
+                }
+
+                if (_zipCancellationTokens.TryGetValue(zipPath, out var cancellationTokenSource))
+                {
+                    cancellationTokenSource.Cancel();
+                }
+            }
+
+            _zipOwners.TryRemove(zipPath, out _);
+
+            try
+            {
+                if (System.IO.File.Exists(zipPath))
+                {
+                    System.IO.File.Delete(zipPath);
+                }
+            }
+            catch
+            {
+            }
+
+            return Ok("Сборка ZIP-архива отменена.");
         }
 
         private async Task SendZipAsync(string zipPath)
@@ -609,21 +863,109 @@ namespace TobacoServer.Controllers
 
         private Task<IActionResult> ReturnZipFileAsync(string zipPath)
         {
+            if (IsZipBuilding(zipPath))
+            {
+                return Task.FromResult<IActionResult>(Conflict("Архив в данный момент ещё собирается."));
+            }
+
             if (System.IO.File.Exists(zipPath))
             {
+                _activeZipDownloads.AddOrUpdate(zipPath, 1, (_, count) => count + 1);
                 ArchiveHelper.StartSendingHeartbeat(zipPath, TrackingType.File);
                 HttpContext.Response.OnCompleted(() =>
                 {
                     ArchiveHelper.StopSendingHeartbeat(zipPath);
+                    _activeZipDownloads.AddOrUpdate(
+                        zipPath,
+                        0,
+                        (_, count) => Math.Max(0, count - 1));
+                    if (_activeZipDownloads.TryGetValue(zipPath, out var count) && count == 0)
+                    {
+                        _activeZipDownloads.TryRemove(zipPath, out _);
+                    }
                     return Task.CompletedTask;
                 });
                 return Task.FromResult<IActionResult>(
-                    PhysicalFile(zipPath, "application/zip", Path.GetFileName(zipPath), enableRangeProcessing: false));
+                    PhysicalFile(zipPath, "application/zip", Path.GetFileName(zipPath), enableRangeProcessing: true));
 
             }
 
-            return Task.FromResult<IActionResult>(BadRequest());
+            return Task.FromResult<IActionResult>(NotFound("Архив не найден на сервере."));
         }
 
+
+        [HttpPost]
+        [Route("archive/cancel-merge/{cameraName}")]
+        public IActionResult CancelArchiveMerge(string cameraName, [FromBody] List<DateTime> neededDates, [FromQuery] string? clientRequestId = null)
+        {
+            foreach (var date in neededDates.Where(x => x < DateTime.Now.Date).Select(x => x.ToString("dd-MM-yyyy")))
+            {
+                var cameraArchiveFolder = Path.Combine(_archivesDirectory, date, "origin", cameraName);
+                var outputPath = Path.Combine(cameraArchiveFolder, $"{cameraName}_{date}.mp4");
+                ClearMergeOwnerIfCompleted(outputPath);
+
+                if (!ArchiveHelper.IsMergeRunning(outputPath))
+                {
+                    continue;
+                }
+
+                if (!IsOwnedByCurrentClient(_mergeOwners, outputPath, clientRequestId))
+                {
+                    return Conflict("Архив за выбранную дату собирается другим клиентом и не может быть отменён.");
+                }
+
+                ArchiveHelper.CancelMerge(outputPath);
+                _mergeOwners.TryRemove(outputPath, out _);
+
+                try
+                {
+                    if (Directory.Exists(cameraArchiveFolder))
+                    {
+                        Directory.Delete(cameraArchiveFolder, true);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            return Ok("Сборка архива отменена.");
+        }
+
+        [HttpPost]
+        [Route("time-archive/cancel-merge/{cameraName}")]
+        public IActionResult CancelTimeArchiveMerge(string cameraName, [FromQuery] DateTime date, [FromQuery] DateTime startTime, [FromQuery] DateTime endTime, [FromQuery] string? clientRequestId = null)
+        {
+            var dateToString = date.ToString("dd-MM-yyyy");
+            var intervalFolder = $"{startTime:HH-mm-ss}_{endTime:HH-mm-ss}";
+            var cameraArchiveFolder = Path.Combine(_archivesDirectory, dateToString, intervalFolder, cameraName);
+            var outputPath = Path.Combine(cameraArchiveFolder, $"{intervalFolder}.mp4");
+            ClearMergeOwnerIfCompleted(outputPath);
+
+            if (ArchiveHelper.IsMergeRunning(outputPath))
+            {
+                if (!IsOwnedByCurrentClient(_mergeOwners, outputPath, clientRequestId))
+                {
+                    return Conflict("Архив за выбранный интервал собирается другим клиентом и не может быть отменён.");
+                }
+
+                ArchiveHelper.CancelMerge(outputPath);
+            }
+
+            _mergeOwners.TryRemove(outputPath, out _);
+
+            try
+            {
+                if (Directory.Exists(cameraArchiveFolder))
+                {
+                    Directory.Delete(cameraArchiveFolder, true);
+                }
+            }
+            catch
+            {
+            }
+
+            return Ok("Сборка архива отменена.");
+        }
     }
 }
