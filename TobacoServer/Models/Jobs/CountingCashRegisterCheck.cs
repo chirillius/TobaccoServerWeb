@@ -27,35 +27,38 @@ internal class CashRegisterRecountingJob : IJob
             var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
             var zonesConfigurator = new ZonesConfigurator();
             var zones = zonesConfigurator.GetZones();
-            var morningTimeToEnd = DateTime.Parse(context.MergedJobDataMap["morningTimeToEnd"].ToString());
-            var eveningTimeToEnd = DateTime.Parse(context.MergedJobDataMap["eveningTimeToEnd"].ToString());
+            var intervalKey = context.MergedJobDataMap["intervalKey"].ToString();
+            var intervalEndTime = TimeSpan.Parse(context.MergedJobDataMap["intervalEndTime"].ToString());
             var clientZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower())).ToList();
             var cashRegisterZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["zoneNamePart"].ToString().ToLower())).ToList();
-            var period = int.Parse(context.MergedJobDataMap["period"].ToString()) / 1000;
-
+            CashRegisterRecountingStatus.EnterWindow(intervalKey);
+            var isLastFireInCurrentWindow = IsLastFireInCurrentWindow(context, intervalEndTime);
 
             lock (_lock)
             {
-                if (context.NextFireTimeUtc.Value.LocalDateTime > DateTime.Now.AddHours(+1))
+                if (isLastFireInCurrentWindow)
                 {
-                    var failure = new CountingCashRegisterFailure()
-                    {
-                        DateTime = DateTime.Now,
-                        DefectImage = new DefectImage()
-                    };
                     if (!_isDetected)
                     {
-                        CashRegisterRecountingStatus.IsRecountingInProgress = false;
+                        var failure = new CountingCashRegisterFailure()
+                        {
+                            DateTime = DateTime.Now,
+                            DefectImage = new DefectImage()
+                        };
                         _ = db.CountingCashRegisterFailures.Add(failure);
                         _ = db.SaveChanges();
-                        return;
                     }
-                    var defectName = failure.Name;
-                    var defectId = failure.Id;
-                    _defectImageService.MoveDefectImagesWithDateAsync(defectName, DateTime.Now.ToString("dd-MM-yyyy:HH-mm-ss-ffff"), _imagesCounter).Wait();
+
+                    if (_isDetected && _imagesCounter.Count > 0)
+                    {
+                        var defectName = $"{DateTime.Now:dd-MM-yyyy:HH-mm-ss-ffff}";
+                        _defectImageService.MoveDefectImagesWithDateAsync(defectName, DateTime.Now.ToString("dd-MM-yyyy:HH-mm-ss-ffff"), _imagesCounter).Wait();
+                    }
+
                     _imagesCounter.Clear();
                     _isDetected = false;
-                    CashRegisterRecountingStatus.IsRecountingInProgress = false;
+                    CashRegisterRecountingStatus.ExitWindow(intervalKey);
+                    return;
                 }
             }
 
@@ -83,7 +86,7 @@ internal class CashRegisterRecountingJob : IJob
                     {
                         _isDetected = true;
                         _imagesCounter.AddRange(imagePathsResult.Where(x => !string.IsNullOrEmpty(x)));
-                        CashRegisterRecountingStatus.IsRecountingInProgress = true;
+                        CashRegisterRecountingStatus.MarkCompleted();
                         return;
                     }
                 }
@@ -96,5 +99,14 @@ internal class CashRegisterRecountingJob : IJob
         {
             logger.LogJobError(ex, "CountingCashRegisterCheckJob");
         }
+    }
+
+    private static bool IsLastFireInCurrentWindow(IJobExecutionContext context, TimeSpan intervalEndTime)
+    {
+        var nextFireTime = context.NextFireTimeUtc?.LocalDateTime;
+        if (nextFireTime == null)
+            return true;
+
+        return nextFireTime.Value.Date > DateTime.Now.Date || nextFireTime.Value.TimeOfDay >= intervalEndTime;
     }
 }

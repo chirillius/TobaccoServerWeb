@@ -1,59 +1,137 @@
-﻿using Quartz;
+﻿using Microsoft.EntityFrameworkCore;
+using Quartz;
 using TobaccoEntities.Models;
 using TobacoServer.Models.DbContext;
 using TobacoServer.Models.Services;
 
 namespace TobacoServer.Models.Jobs
 {
+    [DisallowConcurrentExecution]
     public class ConversionRegisterJob : IJob
     {
-        private static int _peopleCounter = 0;
         private static int _totalPeopleCounter = 0;
-        private static List<DateTime> _checkTimes = new List<DateTime>();
-        public static int _maxPeopleNumber = -1;
+        private static DateTime _currentRegisterDate = DateTime.MinValue;
+
         public async Task Execute(IJobExecutionContext context)
         {
             var dbScope = context.MergedJobDataMap["appDbContextScope"] as IServiceScope;
-            var db = dbScope.ServiceProvider.GetService<AppDbContext>();
-                var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
-                var interval = int.Parse(context.MergedJobDataMap["period"].ToString()) / 1000 + 15;
-                var zonesConfigurator = new ZonesConfigurator();
-                var zones = zonesConfigurator.GetZones();
-                var conversionRegisterZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower())).First();
-                var stallZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["zoneNamePart"].ToString().ToLower())).ToList();
-                var nextFireTime = context.Trigger.GetNextFireTimeUtc();
-                var z = DateTimeOffset.Parse(DateTime.Now.Add(new TimeSpan(1, 0, 0)).ToString());
-                if (nextFireTime.Value.ToLocalTime() > z.LocalDateTime)
-                {
-                    _ = db.ConversionRegister.Add(new ConversionRegister() { DateTime = DateTime.Now.Date, PeopleNumber = _totalPeopleCounter });
-                    _ = db.SaveChanges();
-                    _totalPeopleCounter = 0;
-                }
+            var db = dbScope?.ServiceProvider.GetService<AppDbContext>();
+            var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
 
-                if (_checkTimes.Count >= 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
-                {
-                    _totalPeopleCounter += _peopleCounter;
-                    _peopleCounter = 0;
-                    _checkTimes.Clear();
-                }
+            if (db is null || videoService is null)
+            {
+                return;
+            }
 
-                var stallPeopleNumber = stallZones.Select(async x => await videoService.GetPeopleNumberAsync(x)).Select(x => x.Result).Sum();
+            var now = DateTime.Now;
+            var today = now.Date;
+            await EnsureCounterLoadedAsync(db, today);
 
-                if (stallPeopleNumber > 0)
-                {
-                    var clientNumber = await videoService.GetPeopleNumberAsync(conversionRegisterZones);
-                    if (clientNumber > 0)
-                    {
-                        if (_checkTimes.Count == 0 || _checkTimes.Count > 0 && DateTime.Now - _checkTimes.Last() < new TimeSpan(0, 0, interval))
-                        {
-                            _checkTimes.Add(DateTime.Now);
-                            if (clientNumber > _peopleCounter)
-                            {
-                                _peopleCounter = clientNumber;
-                            }
-                        }
-                    }
-                }
+            if (_currentRegisterDate != today)
+            {
+                await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
+                await LoadCounterForDateAsync(db, today);
+            }
+
+            var zonesConfigurator = new ZonesConfigurator();
+            var zones = zonesConfigurator.GetZones();
+            var conversionZoneNamePart = context.MergedJobDataMap["conversionZoneNamePart"]?.ToString()?.ToLower();
+            var stallZoneNamePart = context.MergedJobDataMap["stallZoneNamePart"]?.ToString()?.ToLower();
+
+            if (string.IsNullOrWhiteSpace(conversionZoneNamePart) || string.IsNullOrWhiteSpace(stallZoneNamePart))
+            {
+                return;
+            }
+
+            var conversionRegisterZone = zones.FirstOrDefault(x => x.Name.ToLower().Contains(conversionZoneNamePart));
+            var nextFireTime = context.Trigger.GetNextFireTimeUtc();
+            var thresholdDateTime = now.AddHours(1);
+
+            if (nextFireTime.HasValue && nextFireTime.Value.ToLocalTime().DateTime > thresholdDateTime)
+            {
+                await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
+
+            }
+
+            if (conversionRegisterZone?.ConversionCounting?.EntryBand is null)
+            {
+                return;
+            }
+
+            var stallZones = zones.Where(x => x.Name.ToLower().Contains(stallZoneNamePart)).ToList();
+            if (stallZones.Count == 0)
+            {
+                return;
+            }
+
+            var stallCounts = await Task.WhenAll(stallZones.Select(x => videoService.GetPeopleNumberAsync(x)));
+            if (stallCounts.Sum() <= 0)
+            {
+                return;
+            }
+
+            var directionalCount = await videoService.GetDirectionalEntryCountAsync(conversionRegisterZone);
+            if (directionalCount.NewEntries > 0)
+            {
+                _totalPeopleCounter += directionalCount.NewEntries;
+                await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
             }
         }
+
+        private static async Task EnsureCounterLoadedAsync(AppDbContext db, DateTime targetDate)
+        {
+            if (_currentRegisterDate == targetDate)
+            {
+                return;
+            }
+
+            if (_currentRegisterDate == DateTime.MinValue)
+            {
+                await LoadCounterForDateAsync(db, targetDate);
+            }
+        }
+
+        private static async Task LoadCounterForDateAsync(AppDbContext db, DateTime targetDate)
+        {
+            var nextDate = targetDate.AddDays(1);
+            var existingRecord = await db.ConversionRegister
+                .Where(x => x.DateTime >= targetDate && x.DateTime < nextDate)
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
+
+            _currentRegisterDate = targetDate;
+            _totalPeopleCounter = existingRecord?.PeopleNumber ?? 0;
+        }
+
+        private static async Task UpsertDailyRegisterAsync(AppDbContext db, DateTime targetDate, int peopleNumber)
+        {
+            if (targetDate == DateTime.MinValue)
+            {
+                return;
+            }
+
+            var nextDate = targetDate.AddDays(1);
+            var existingRecord = await db.ConversionRegister
+                .Where(x => x.DateTime >= targetDate && x.DateTime < nextDate)
+                .OrderByDescending(x => x.Id)
+                .FirstOrDefaultAsync();
+
+            if (existingRecord is null)
+            {
+                _ = db.ConversionRegister.Add(new ConversionRegister
+                {
+                    DateTime = targetDate,
+                    PeopleNumber = peopleNumber,
+                    DefectImage = new DefectImage()
+                });
+            }
+            else
+            {
+                existingRecord.PeopleNumber = peopleNumber;
+                existingRecord.DateTime = targetDate;
+            }
+
+            await db.SaveChangesAsync();
+        }
     }
+}

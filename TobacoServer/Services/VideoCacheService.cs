@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using TobaccoEntities.Models;
+using TobaccoEntities.Models.Neuro;
 
 namespace TobacoServer.Models.Services
 {
@@ -45,6 +46,11 @@ namespace TobacoServer.Models.Services
                 _ = _peopleNumbers.TryAdd(zone, (peopleNumber, DateTime.Now));
                 return peopleNumber;
             }
+        }
+
+        public async Task<DirectionalEntryCountResponse> GetDirectionalEntryCountAsync(Zone zone)
+        {
+            return await base.GetDirectionalEntryCountAsync(zone);
         }
 
         public async Task<bool> GetClothesColorAsync(Zone zone)

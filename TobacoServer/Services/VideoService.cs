@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using OpenCvSharp;
 using Quartz.Impl.Triggers;
 using TobaccoEntities.Models;
+using TobaccoEntities.Models.Neuro;
 
 namespace TobacoServer.Models.Services
 {
@@ -168,6 +169,19 @@ namespace TobacoServer.Models.Services
             {
                 throw;
             }
+        }
+
+        protected async Task<DirectionalEntryCountResponse> GetDirectionalEntryCountAsync(Zone zone)
+        {
+            var response = await _httpClient.PostAsync(_peopleDetectionAddress + "directional-entry-count", JsonContent.Create(zone));
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception(await response.Content.ReadAsStringAsync());
+            }
+
+            var payload = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<DirectionalEntryCountResponse>(payload)
+                ?? new DirectionalEntryCountResponse();
         }
 
         protected async Task<CashRegisterStates> GetCashRegisterStateAsync(Zone zone)

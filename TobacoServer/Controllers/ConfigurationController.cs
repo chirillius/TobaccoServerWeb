@@ -152,8 +152,14 @@ namespace TobacoServer.Controllers
             }
 
             var zoneNamesJson = System.IO.File.ReadAllText(zoneNamesPath);
-            Console.WriteLine($"Отправляем JSON: {zoneNamesJson}");
-            return Content(zoneNamesJson, "application/json");
+            var zoneNames = JsonConvert.DeserializeObject<List<string>>(zoneNamesJson) ?? new List<string>();
+
+            if (!zoneNames.Any(zoneName => string.Equals(zoneName, "Конверсия", StringComparison.OrdinalIgnoreCase)))
+            {
+                zoneNames.Add("Конверсия");
+            }
+
+            return Content(JsonConvert.SerializeObject(zoneNames), "application/json");
         }
 
 

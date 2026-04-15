@@ -37,8 +37,9 @@ namespace TobacoServer.Models.Jobs
 
                 lock (_checkTimesLock)
                 {
-                   
-                    if (CashRegisterRecountingStatus.IsRecountingInProgress)
+
+                    if (CashRegisterRecountingStatus.IsRecountingWindowActive &&
+                        !CashRegisterRecountingStatus.IsRecountingCompleted)
                     {
                         _imagesCounter.Clear();
                         _cachedImages.ForEach(x => x.Dispose());
@@ -53,7 +54,7 @@ namespace TobacoServer.Models.Jobs
                         var images = _defectImageService.GetImageWithResultAsync(_cachedImagesPaths.Values.ToList()).Result;
                         foreach (var item in images)
                         {
-                            
+
                             _cachedImages.Add(item);
                         }
                         using var grid = DefectImagesSaver.CreateImageGrid(_cachedImages);

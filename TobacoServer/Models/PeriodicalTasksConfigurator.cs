@@ -4,6 +4,7 @@ using Quartz;
 using Quartz.Impl;
 using Quartz.Simpl;
 using System;
+using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
 using TobaccoEntities.Models;
@@ -100,11 +101,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("zoneNamePart", _json.abandonedOpenCashRegister.zoneNamePart);
                 job.JobDataMap.Add("stallZoneNamePart", _json.abandonedOpenCashRegister.stallZoneNamePart);
                 job.JobDataMap.Add("period", _json.abandonedOpenCashRegister.period);
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"abandonedOpenCashRegister", "Default")  
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"abandonedOpenCashRegister", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x            
-                  .WithInterval(new TimeSpan(0, 0, period / 1000))  
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(new TimeSpan(0, 0, period / 1000))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -134,8 +135,8 @@ namespace TobacoServer.Models
                 ITrigger trigger = TriggerBuilder.Create()
                         .WithIdentity($"ConfigureLightDetectionAsync", "Default")
                         .StartAt(DateTime.Now)
-                        .WithSimpleSchedule(x => x            
-                        .WithInterval(new TimeSpan(0, 0, period / 1000))  
+                        .WithSimpleSchedule(x => x
+                        .WithInterval(new TimeSpan(0, 0, period / 1000))
                         .RepeatForever())
                         .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -145,37 +146,27 @@ namespace TobacoServer.Models
 
         private async Task ConfigureBadgeDetectionAsync()
         {
-
             var scheduler = await StdSchedulerFactory.GetDefaultScheduler();
             bool isActive = _json.badgeDetection.isActive;
             int periodInMinutes = _json.badgeDetection.periodInMinutes;
             if (isActive)
             {
-                for (int i = 0; i < 7; i++)
-                {
-                    await scheduler.Start();
-                    int morningHours;
-                    int morningMinutes;
-                    int eveningHours;
-                    int eveningMinutes;
-                    string identityName = GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes) + "бейдж";
-                    var today = ((char)DateTime.Now.DayOfWeek);
-                    int dayOfWeek = ((i + today) % 7) + 1;
-                    var scope = _serviceProvider.CreateScope();
-                    _defectScopes.Add(scope);
-                    IJobDetail job = JobBuilder.Create<BadgeDetectionJob>().Build();
-                    job.JobDataMap.Add("logger", _logger);
-                    job.JobDataMap.Add("appDbContextScope", scope);
-                    job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                    job.JobDataMap.Add("zoneNamePart", _json.badgeDetection.zoneNamePart);
-                    ITrigger trigger = TriggerBuilder.Create()  
-                    .WithIdentity($"badge_{i}", "Default")    
-                      .WithCronSchedule($"0 0/{periodInMinutes} {morningHours}-{eveningHours - 1} ? * {dayOfWeek} *")
-                      .Build();
-                    _jobKeysThatMustBeStoppedForNight.Add(job.Key);
-                    _ = await scheduler.ScheduleJob(job, trigger);
-                }
-
+                var scope = _serviceProvider.CreateScope();
+                _defectScopes.Add(scope);
+                IJobDetail job = JobBuilder.Create<BadgeDetectionJob>().Build();
+                job.JobDataMap.Add("logger", _logger);
+                job.JobDataMap.Add("appDbContextScope", scope);
+                job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
+                job.JobDataMap.Add("zoneNamePart", _json.badgeDetection.zoneNamePart);
+                ITrigger trigger = TriggerBuilder.Create()
+                    .WithIdentity("badgeDetection", "Default")
+                    .StartAt(DateTime.Now)
+                    .WithSimpleSchedule(x => x
+                        .WithInterval(TimeSpan.FromMinutes(periodInMinutes))
+                        .RepeatForever())
+                    .Build();
+                _jobKeysThatMustBeStoppedForNight.Add(job.Key);
+                _ = await scheduler.ScheduleJob(job, trigger);
             }
         }
 
@@ -194,11 +185,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
                 job.JobDataMap.Add("period", _json.bottleDetection.period);
                 job.JobDataMap.Put("zoneNamePart", _json.bottleDetection.zoneNamePart);
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"bottleDetection", "Default")     
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"bottleDetection", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x            
-                  .WithInterval(TimeSpan.FromMilliseconds(period))  
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -216,35 +207,28 @@ namespace TobacoServer.Models
                 var scope = _serviceProvider.CreateScope();
                 _defectScopes.Add(scope);
 
-                IJobDetail job = JobBuilder.Create<ConversionRegisterJob>()
-                    .WithIdentity("ConversionRegisterJob", "Default")
-                    .StoreDurably()
-                    .Build();
+                IJobDetail job = JobBuilder.Create<ConversionRegisterJob>().Build();
 
                 job.JobDataMap.Add("logger", _logger);
                 job.JobDataMap.Add("appDbContextScope", scope);
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                job.JobDataMap.Add("zoneNamePart", _json.conversionRegister.zoneNamePart);
-                job.JobDataMap.Add("clientZoneNamePart", _json.conversionRegister.clientZoneNamePart);
+                var conversionZoneNamePart = _json.conversionRegister.conversionZoneNamePart ?? _json.conversionRegister.clientZoneNamePart;
+                var stallZoneNamePart = _json.conversionRegister.stallZoneNamePart ?? _json.conversionRegister.zoneNamePart;
+
+                job.JobDataMap.Add("conversionZoneNamePart", conversionZoneNamePart);
+                job.JobDataMap.Add("stallZoneNamePart", stallZoneNamePart);
                 job.JobDataMap.Add("period", period);
 
-                await scheduler.AddJob(job, replace: true);
+                ITrigger trigger = TriggerBuilder.Create()
+                    .WithIdentity("ConversionRegisterTrigger", "Default")
+                    .StartAt(DateTime.Now)
+                    .WithSimpleSchedule(x => x
+                        .WithInterval(TimeSpan.FromMilliseconds(period))
+                        .RepeatForever())
+                    .Build();
 
-                for (int i = 0; i < 7; i++)
-                {
-                    var today = ((char)DateTime.Now.DayOfWeek);
-                    int dayOfWeek = ((i + today) % 7) + 1;
-                    int morningHours, eveningHours;
-                    string identityName = GetParsedDate(i, out morningHours, out _, out eveningHours, out _);
-
-                    ITrigger trigger = TriggerBuilder.Create()
-                        .WithIdentity($"ConversionRegisterTrigger_{dayOfWeek}", "Default")
-                        .ForJob(job)
-                        .WithCronSchedule($"0/{period / 1000} * {morningHours}-{eveningHours - 1} ? * {dayOfWeek} *")
-                        .Build();
-
-                    await scheduler.ScheduleJob(trigger);
-                }
+                _jobKeysThatMustBeStoppedForNight.Add(job.Key);
+                await scheduler.ScheduleJob(job, trigger);
             }
         }
 
@@ -264,11 +248,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
                 job.JobDataMap.Add("zoneNamePart", _json.clearStallDetection.zoneNamePart);
                 job.JobDataMap.Add("period", _json.clearStallDetection.period);
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"ClearStallDetection", "Default")    
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"ClearStallDetection", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x          
-                  .WithInterval(TimeSpan.FromMilliseconds(period)) 
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -295,8 +279,8 @@ namespace TobacoServer.Models
                 ITrigger trigger = TriggerBuilder.Create()
                 .WithIdentity($"ClothesControl", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x            
-                  .WithInterval(TimeSpan.FromMinutes(periodInMinutes))  
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMinutes(periodInMinutes))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -309,43 +293,37 @@ namespace TobacoServer.Models
             bool isActive = _json.moppingDetection.isActive;
             if (isActive)
             {
-                var period = _json.moppingDetection.period;
+                int period = _json.moppingDetection.period;
                 var scheduler = await StdSchedulerFactory.GetDefaultScheduler();
                 var scope = _serviceProvider.CreateScope();
                 _defectScopes.Add(scope);
+                var job = JobBuilder.Create<MoppingJob>()
+                    .WithIdentity("MoppingJob", "Default")
+                    .StoreDurably()
+                    .Build();
+
+                job.JobDataMap.Add("logger", _logger);
+                job.JobDataMap.Add("appDbContextScope", scope);
+                job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
+                job.JobDataMap.Add("zoneNamePart", _json.moppingDetection.zoneNamePart);
+
+                await scheduler.AddJob(job, replace: true);
 
                 for (int i = 0; i < 7; i++)
                 {
-                    await scheduler.Start();
-                    var job = JobBuilder.Create<MoppingJob>().StoreDurably().Build();
-
-                    int morningHours;
-                    int morningMinutes;
-                    int eveningHours;
-                    int eveningMinutes;
-                    string identityName = GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes);
-                    DateTime date = DateTime.Today.AddDays(i).AddHours(morningHours).AddMinutes(morningMinutes);
-                    identityName = date.ToString("dd.MM.yyyy");
-
-                    var today = ((char)DateTime.Now.DayOfWeek);
-                    int dayOfWeek = ((i + today) % 7) + 1;
-
-                    var morningTrigger = TriggerBuilder.Create().WithIdentity(identityName, "Morning")
-                        .WithCronSchedule($"0/{period / 1000} * {morningHours}-{morningHours + 1} ? * {dayOfWeek} *",
-                        x => x.InTimeZone(TimeZoneInfo.Local)).ForJob(job).Build();
-
-                    var eveningTrigger = TriggerBuilder.Create().WithIdentity(identityName, "Evening")
-                       .WithCronSchedule($"0/{period / 1000} * {eveningHours - 1}-{eveningHours} ? * {dayOfWeek} *", x => x.InTimeZone(TimeZoneInfo.Local)).ForJob(job).Build();
-
-                    job.JobDataMap.Add("logger", _logger);
-                    job.JobDataMap.Add("appDbContextScope", scope);
-                    job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                    job.JobDataMap.Add("zoneNamePart", _json.moppingDetection.zoneNamePart);
-
-                    await scheduler.AddJob(job, false);
-
-                    await scheduler.ScheduleJob(morningTrigger);
-                    await scheduler.ScheduleJob(eveningTrigger);
+                    int intervalIndex = 0;
+                    foreach (var (start, end) in GetConfiguredIntervals((IEnumerable)_json.moppingDetection.intervals))
+                    {
+                        await ScheduleRecurringWindowAsync(
+                            scheduler,
+                            job,
+                            $"MoppingDetection_{i}_{intervalIndex}",
+                            i,
+                            start,
+                            end,
+                            period);
+                        intervalIndex++;
+                    }
                 }
             }
         }
@@ -356,56 +334,44 @@ namespace TobacoServer.Models
 
             if (isActive)
             {
-                var period = _json.countingCashRegisterCheck.period;
-                var rangeBeforeInMinutes = (int)_json.countingCashRegisterCheck.rangeBeforeInMinutes;
-                var rangeAfterInMinutes = (int)_json.countingCashRegisterCheck.rangeAfterInMinutes;
+                int period = _json.countingCashRegisterCheck.period;
                 var scheduler = await StdSchedulerFactory.GetDefaultScheduler();
                 var scope = _serviceProvider.CreateScope();
                 _defectScopes.Add(scope);
+                var job = JobBuilder.Create<CashRegisterRecountingJob>()
+                    .WithIdentity("CashRegisterRecountingJob", "Default")
+                    .StoreDurably()
+                    .Build();
+
+                job.JobDataMap.Add("logger", _logger);
+                job.JobDataMap.Add("appDbContextScope", scope);
+                job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
+                job.JobDataMap.Add("period", period);
+                job.JobDataMap.Add("zoneNamePart", _json.countingCashRegisterCheck.zoneNamePart);
+                job.JobDataMap.Add("clientZoneNamePart", _json.countingCashRegisterCheck.clientZoneNamePart);
+
+                await scheduler.AddJob(job, replace: true);
 
                 for (int i = 0; i < 7; i++)
                 {
-                    await scheduler.Start();
-                    var today = ((char)DateTime.Now.DayOfWeek);
-                    int dayOfWeek = ((i + today) % 7) + 1;
-
-                    int morningHours;
-                    int morningMinutes;
-                    int eveningHours;
-                    int eveningMinutes;
-                    string identityName = GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes) + "HumanDetectionBeforeAndAfterShift";
-
-                    var morningTime = new TimeSpan(morningHours, morningMinutes, 0);
-                    var eveningTime = new TimeSpan(eveningHours, eveningMinutes, 0);
-                    var morningTimeToEnd = morningTime + TimeSpan.FromMinutes(rangeAfterInMinutes);
-
-                    var job = JobBuilder.Create<CashRegisterRecountingJob>().StoreDurably().Build();
-                    var morningTrigger = TriggerBuilder.Create()
-                        .WithIdentity($"CountingCashRegisterMorningTrigger_{identityName}")
-                        .WithCronSchedule($"0/{period / 1000}" +
-                        $" * {(morningTime - TimeSpan.FromMinutes(rangeBeforeInMinutes)).Hours}" +
-                        $"-{(morningTime + TimeSpan.FromMinutes(rangeAfterInMinutes)).Hours} ? * {dayOfWeek} * ",
-                        x => x.InTimeZone(TimeZoneInfo.Local)).ForJob(job).Build();
-
-                    var eveningTrigger = TriggerBuilder.Create()
-                        .WithIdentity($"CountingCashRegisterEveningTrigger_{identityName}")
-                        .WithCronSchedule($"0/{period / 1000} " +
-                        $"* {(eveningTime - TimeSpan.FromMinutes(rangeAfterInMinutes)).Hours}-{eveningHours} ? * {dayOfWeek} * ",
-                        x => x.InTimeZone(TimeZoneInfo.Local)).ForJob(job).Build();
-
-                    job.JobDataMap.Add("logger", _logger);
-                    job.JobDataMap.Add("appDbContextScope", scope);
-                    job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                    job.JobDataMap.Add("period", period);
-                    job.JobDataMap.Add("zoneNamePart", _json.countingCashRegisterCheck.zoneNamePart);
-                    job.JobDataMap.Add("clientZoneNamePart", _json.countingCashRegisterCheck.clientZoneNamePart);
-                    job.JobDataMap.Add("morningTimeToEnd", morningTimeToEnd);
-                    job.JobDataMap.Add("eveningTimeToEnd", eveningTime);
-
-                    await scheduler.AddJob(job, false);
-
-                    await scheduler.ScheduleJob(morningTrigger);
-                    await scheduler.ScheduleJob(eveningTrigger);
+                    int intervalIndex = 0;
+                    foreach (var (start, end) in GetConfiguredIntervals((IEnumerable)_json.countingCashRegisterCheck.intervals))
+                    {
+                        await ScheduleRecurringWindowAsync(
+                            scheduler,
+                            job,
+                            $"CountingCashRegister_{i}_{intervalIndex}",
+                            i,
+                            start,
+                            end,
+                            period,
+                            new Dictionary<string, string>
+                            {
+                                ["intervalKey"] = $"{GetQuartzDayOfWeek(i)}_{intervalIndex}",
+                                ["intervalEndTime"] = end.ToString(@"hh\:mm\:ss")
+                            });
+                        intervalIndex++;
+                    }
                 }
             }
         }
@@ -417,41 +383,27 @@ namespace TobacoServer.Models
             {
                 var scheduler = await StdSchedulerFactory.GetDefaultScheduler();
                 int period = _json.cashRegisterCheck.period;
-                var rangeBeforeInMinutes = (int)_json.countingCashRegisterCheck.rangeBeforeInMinutes;
-                var rangeAfterInMinutes = (int)_json.countingCashRegisterCheck.rangeAfterInMinutes;
                 var scope = _serviceProvider.CreateScope();
                 _defectScopes.Add(scope);
-                for (int i = 0; i < 7; i++)
-                {
-                    await scheduler.Start();
-                    var today = ((char)DateTime.Now.DayOfWeek);
-                    int dayOfWeek = ((i + today) % 7) + 1;
+                var job = JobBuilder.Create<CashRegisterCheckJob>().Build();
 
-                    int morningHours;
-                    int morningMinutes;
-                    int eveningHours;
-                    int eveningMinutes;
-                    string identityName = GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes) + "HumanDetectionBeforeAndAfterShift";
+                job.JobDataMap.Add("logger", _logger);
+                job.JobDataMap.Add("appDbContextScope", scope);
+                job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
+                job.JobDataMap.Add("period", _json.cashRegisterCheck.period);
+                job.JobDataMap.Add("zoneNamePart", _json.cashRegisterCheck.zoneNamePart);
+                job.JobDataMap.Add("clientZoneNamePart", _json.cashRegisterCheck.clientZoneNamePart);
 
-                    var morningStartTime = new TimeSpan(morningHours, morningMinutes, 0) + TimeSpan.FromMinutes(rangeAfterInMinutes);
-                    var eveningEndTime = new TimeSpan(eveningHours, eveningMinutes, 0) - TimeSpan.FromMinutes(rangeAfterInMinutes);
+                var trigger = TriggerBuilder.Create()
+                    .WithIdentity("CashRegisterTrigger", "Default")
+                    .StartAt(DateTime.Now)
+                    .WithSimpleSchedule(x => x
+                        .WithInterval(TimeSpan.FromMilliseconds(period))
+                        .RepeatForever())
+                    .Build();
 
-                    var job = JobBuilder.Create<CashRegisterCheckJob>().StoreDurably().Build();
-
-                    var trigger = TriggerBuilder.Create()
-                        .WithIdentity($"CashRegisterTrigger_{identityName}")
-                        .WithCronSchedule($"0/{period / 1000} {morningStartTime.Hours}-{eveningEndTime.Hours} * ? * {dayOfWeek} *",
-                        x => x.InTimeZone(TimeZoneInfo.Local)).ForJob(job).Build();
-
-                    job.JobDataMap.Add("logger", _logger);
-                    job.JobDataMap.Add("appDbContextScope", scope);
-                    job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                    job.JobDataMap.Add("period", _json.cashRegisterCheck.period);
-                    job.JobDataMap.Add("zoneNamePart", _json.cashRegisterCheck.zoneNamePart);
-                    job.JobDataMap.Add("clientZoneNamePart", _json.cashRegisterCheck.clientZoneNamePart);
-                    job.JobDataMap.Add("isRecountingInProgress", CashRegisterRecountingStatus.IsRecountingInProgress);
-                    _ = await scheduler.ScheduleJob(job, trigger);
-                }
+                _jobKeysThatMustBeStoppedForNight.Add(job.Key);
+                _ = await scheduler.ScheduleJob(job, trigger);
             }
         }
 
@@ -473,11 +425,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("timeDelta", _json.poseClassification.timeDelta);
                 job.JobDataMap.Add("zoneNamePart", _json.poseClassification.zoneNamePart);
                 job.JobDataMap.Add("clientZoneNamePart", _json.poseClassification.clientZoneNamePart);
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"PoseClassification", "Default")     
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"PoseClassification", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x           
-                  .WithInterval(TimeSpan.FromMilliseconds(period)) 
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -503,11 +455,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("period", _json.foodDetection.period);
                 job.JobDataMap.Add("zoneNamePart", _json.foodDetection.zoneNamePart);
                 job.JobDataMap.Add("clientZoneNamePart", _json.foodDetection.clientZoneNamePart);
-                ITrigger trigger = TriggerBuilder.Create() 
-                .WithIdentity($"FoodDetection", "Default")  
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"FoodDetection", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x        
-                  .WithInterval(TimeSpan.FromMilliseconds(period)) 
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -533,10 +485,10 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("zoneNamePart", _json.phoneDetection.zoneNamePart);
                 job.JobDataMap.Add("clientZoneNamePart", _json.phoneDetection.clientZoneNamePart);
                 ITrigger trigger = TriggerBuilder.Create()
-                .WithIdentity($"PhoneDetection", "Default")   
+                .WithIdentity($"PhoneDetection", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x      
-                  .WithInterval(TimeSpan.FromMilliseconds(period))  
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -571,42 +523,18 @@ namespace TobacoServer.Models
             for (int i = 0; i < 7; i++)
             {
                 int morningHours, morningMinutes, eveningHours, eveningMinutes;
-                string dayName = GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes);
-                var today = ((char)DateTime.Now.DayOfWeek);
-                int dayOfWeek = ((i + today) % 7) + 1;
-                int eveningStartHour = eveningHours + 1;
-                int eveningEndHour = 23;
+                GetParsedDate(i, out morningHours, out morningMinutes, out eveningHours, out eveningMinutes);
+                var nightStart = new TimeSpan(eveningHours, eveningMinutes, 0).Add(TimeSpan.FromHours(1));
+                var nightEnd = new TimeSpan(morningHours, morningMinutes, 0).Subtract(TimeSpan.FromHours(1));
 
-                int morningStartHour = 0;
-                int morningEndHour = morningHours - 1;
-
-                if (eveningStartHour <= eveningEndHour)
-                {
-                    string cronEvening = $"0/{period / 1000} * {eveningStartHour}-{eveningEndHour} ? * {dayOfWeek} *";
-
-                    ITrigger eveningTrigger = TriggerBuilder.Create()
-                        .WithIdentity($"EveningTrigger_{dayName}", "Default")
-                        .ForJob(job)
-                        .WithCronSchedule(cronEvening)
-                        .Build();
-
-                    await scheduler.ScheduleJob(eveningTrigger);
-                }
-
-                int nextDay = (dayOfWeek % 7) + 1;
-
-                if (morningStartHour <= morningEndHour)
-                {
-                    string cronMorning = $"0/{period / 1000} * {morningStartHour}-{morningEndHour} ? * {nextDay} *";
-
-                    ITrigger morningTrigger = TriggerBuilder.Create()
-                        .WithIdentity($"MorningTrigger_{dayName}", "Default")
-                        .ForJob(job)
-                        .WithCronSchedule(cronMorning)
-                        .Build();
-
-                    await scheduler.ScheduleJob(morningTrigger);
-                }
+                await ScheduleRecurringWindowAsync(
+                    scheduler,
+                    job,
+                    $"HumanDetectionNight_{i}",
+                    i,
+                    nightStart,
+                    nightEnd,
+                    period);
             }
         }
 
@@ -629,15 +557,15 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("period", _json.serviceNearCabinet.period);
                 job.JobDataMap.Add("appDbContextScope", scope);
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"ServiceNearCabinetDetection", "Default")    
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"ServiceNearCabinetDetection", "Default")
                     .StartAt(DateTime.Now)
-                    .WithSimpleSchedule(x => x            
-                        .WithInterval(TimeSpan.FromMilliseconds(period))       
-                        .RepeatForever())                  
+                    .WithSimpleSchedule(x => x
+                        .WithInterval(TimeSpan.FromMilliseconds(period))
+                        .RepeatForever())
                     .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
-                _ = await scheduler.ScheduleJob(job, trigger);       
+                _ = await scheduler.ScheduleJob(job, trigger);
             }
         }
 
@@ -662,15 +590,15 @@ namespace TobacoServer.Models
                     job.JobDataMap.Add("period", _json.staringAtCamera.period);
                     job.JobDataMap.Add("appDbContextScope", scope);
                     job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                    ITrigger trigger = TriggerBuilder.Create() 
-                    .WithIdentity($"StaringAtCameraDetection", "Default")    
+                    ITrigger trigger = TriggerBuilder.Create()
+                    .WithIdentity($"StaringAtCameraDetection", "Default")
                         .StartAt(DateTime.Now)
-                        .WithSimpleSchedule(x => x           
-                            .WithInterval(TimeSpan.FromMilliseconds(period))      
-                            .RepeatForever())                  
+                        .WithSimpleSchedule(x => x
+                            .WithInterval(TimeSpan.FromMilliseconds(period))
+                            .RepeatForever())
                         .Build();
                     _jobKeysThatMustBeStoppedForNight.Add(job.Key);
-                    _ = await scheduler.ScheduleJob(job, trigger);       
+                    _ = await scheduler.ScheduleJob(job, trigger);
                 }
             }
         }
@@ -693,14 +621,14 @@ namespace TobacoServer.Models
                 nightStoppingJob.JobDataMap.Add("jobs", _jobKeysThatMustBeStoppedForNight);
                 nightStoppingJob.JobDataMap.Add("scheduler", scheduler);
                 nightStoppingJob.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                ITrigger nightStoppingTrigger = TriggerBuilder.Create() 
-                    .WithIdentity($"NightStoppingTrigger_{identityName}", "Default")    
+                ITrigger nightStoppingTrigger = TriggerBuilder.Create()
+                    .WithIdentity($"NightStoppingTrigger_{identityName}", "Default")
                     .StartAt(new DateTimeOffset(eventngFireTime))
-                    .WithSimpleSchedule(x => x            
-                        .WithIntervalInHours(7 * 24)       
-                        .RepeatForever())                  
+                    .WithSimpleSchedule(x => x
+                        .WithIntervalInHours(7 * 24)
+                        .RepeatForever())
                     .Build();
-                _ = await scheduler.ScheduleJob(nightStoppingJob, nightStoppingTrigger);       
+                _ = await scheduler.ScheduleJob(nightStoppingJob, nightStoppingTrigger);
 
 
                 IJobDetail dayResumingJob = JobBuilder.Create<DayResumingJob>().Build();
@@ -708,13 +636,13 @@ namespace TobacoServer.Models
                 dayResumingJob.JobDataMap.Add("jobs", _jobKeysThatMustBeStoppedForNight);
                 dayResumingJob.JobDataMap.Add("scheduler", scheduler);
                 ITrigger dayResumingTrigger = TriggerBuilder.Create()
-                    .WithIdentity($"DayResumingTrigger_{identityName}", "Default")     
+                    .WithIdentity($"DayResumingTrigger_{identityName}", "Default")
                     .StartAt(new DateTimeOffset(morningFireTime))
-                    .WithSimpleSchedule(x => x          
-                        .WithIntervalInHours(7 * 24)         
-                        .RepeatForever())                  
+                    .WithSimpleSchedule(x => x
+                        .WithIntervalInHours(7 * 24)
+                        .RepeatForever())
                     .Build();
-                _ = await scheduler.ScheduleJob(dayResumingJob, dayResumingTrigger);     
+                _ = await scheduler.ScheduleJob(dayResumingJob, dayResumingTrigger);
 
             }
         }
@@ -791,12 +719,12 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("appDbContextScope", scope);
                 job.JobDataMap.Add("cameraAddress", _json.speechToText.cameraAddress);
                 job.JobDataMap.Add("isRunning", false);
-                ITrigger trigger = TriggerBuilder.Create() 
-                .WithIdentity($"SpeechToText", "Default")    
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"SpeechToText", "Default")
                 .WithPriority(10)
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x          
-                  .WithInterval(TimeSpan.FromMilliseconds(period))  
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -820,11 +748,11 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
                 job.JobDataMap.Add("zoneNamePart", _json.smokeDetection.zoneNamePart);
                 job.JobDataMap.Add("clientZoneNamePart", _json.smokeDetection.clientZoneNamePart);
-                ITrigger trigger = TriggerBuilder.Create()  
-                .WithIdentity($"SmokeDetection", "Default")   
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"SmokeDetection", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x           
-                  .WithInterval(TimeSpan.FromMilliseconds(period)) 
+                  .WithSimpleSchedule(x => x
+                  .WithInterval(TimeSpan.FromMilliseconds(period))
                   .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
@@ -849,12 +777,12 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("appDbContextScope", scope);
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
                 job.JobDataMap.Add("thresholdInMinutes", _json.noOneAtStallForTooLong.thresholdInMinutes);
-                ITrigger trigger = TriggerBuilder.Create() 
-                .WithIdentity($"PeopleAtStallNumberCheck", "Default")     
+                ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"PeopleAtStallNumberCheck", "Default")
                   .StartAt(DateTime.Now)
-                  .WithSimpleSchedule(x => x           
-                      .WithInterval(TimeSpan.FromMilliseconds(period))     
-                      .RepeatForever())                 
+                  .WithSimpleSchedule(x => x
+                      .WithInterval(TimeSpan.FromMilliseconds(period))
+                      .RepeatForever())
                   .Build();
                 _jobKeysThatMustBeStoppedForNight.Add(job.Key);
                 _ = await scheduler.ScheduleJob(job, trigger);
@@ -907,15 +835,136 @@ namespace TobacoServer.Models
             job.JobDataMap.Add("ZoneNamePart", _json.delays.zoneNamePart);
             job.JobDataMap.Add("appDbContextScope", scope);
             job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-            ITrigger trigger = TriggerBuilder.Create() 
-                .WithIdentity($"DelayTrigger_{identityName}", "EveningDelays")     
+            ITrigger trigger = TriggerBuilder.Create()
+                .WithIdentity($"DelayTrigger_{identityName}", "EveningDelays")
                 .StartAt(new DateTimeOffset(fireAt))
-                .WithSimpleSchedule(x => x           
-                    .WithIntervalInHours(7 * 24)         
-                    .RepeatForever())                   
+                .WithSimpleSchedule(x => x
+                    .WithIntervalInHours(7 * 24)
+                    .RepeatForever())
                 .Build();
-            _ = await scheduler.ScheduleJob(job, trigger);        
+            _ = await scheduler.ScheduleJob(job, trigger);
         }
+
+        private IEnumerable<(TimeSpan Start, TimeSpan End)> GetConfiguredIntervals(IEnumerable intervals)
+        {
+            foreach (var interval in intervals)
+            {
+                var parts = interval.ToString().Split('-', StringSplitOptions.TrimEntries);
+                yield return (TimeSpan.Parse(parts[0]), TimeSpan.Parse(parts[1]));
+            }
+        }
+
+        private async Task ScheduleRecurringWindowAsync(
+            IScheduler scheduler,
+            IJobDetail job,
+            string identityPrefix,
+            int daysOffset,
+            TimeSpan start,
+            TimeSpan end,
+            int periodInMilliseconds,
+            IDictionary<string, string>? triggerData = null)
+        {
+            int dayOfWeek = GetQuartzDayOfWeek(daysOffset);
+
+            if (end <= start)
+            {
+                await ScheduleWindowSegmentsAsync(
+                    scheduler,
+                    job,
+                    $"{identityPrefix}_late",
+                    dayOfWeek,
+                    start,
+                    TimeSpan.FromHours(24),
+                    periodInMilliseconds,
+                    triggerData);
+
+                int nextDayOfWeek = (dayOfWeek % 7) + 1;
+                await ScheduleWindowSegmentsAsync(
+                    scheduler,
+                    job,
+                    $"{identityPrefix}_early",
+                    nextDayOfWeek,
+                    TimeSpan.Zero,
+                    end,
+                    periodInMilliseconds,
+                    triggerData);
+                return;
+            }
+
+            await ScheduleWindowSegmentsAsync(
+                scheduler,
+                job,
+                identityPrefix,
+                dayOfWeek,
+                start,
+                end,
+                periodInMilliseconds,
+                triggerData);
+        }
+
+        private async Task ScheduleWindowSegmentsAsync(
+            IScheduler scheduler,
+            IJobDetail job,
+            string identityPrefix,
+            int dayOfWeek,
+            TimeSpan start,
+            TimeSpan end,
+            int periodInMilliseconds,
+            IDictionary<string, string>? triggerData = null)
+        {
+            if (start >= end)
+                return;
+
+            int periodInSeconds = Math.Max(1, periodInMilliseconds / 1000);
+            var current = start;
+            int segmentIndex = 0;
+
+            while (current < end)
+            {
+                var nextHour = new TimeSpan(current.Hours, 0, 0).Add(TimeSpan.FromHours(1));
+                var segmentEnd = nextHour < end ? nextHour : end;
+                var minuteField = BuildMinuteField(current, segmentEnd);
+                var triggerBuilder = TriggerBuilder.Create()
+                    .WithIdentity($"{identityPrefix}_{segmentIndex}", "Default")
+                    .ForJob(job)
+                    .WithCronSchedule(
+                        $"0/{periodInSeconds} {minuteField} {current.Hours} ? * {dayOfWeek} *",
+                        x => x.InTimeZone(TimeZoneInfo.Local));
+
+                if (triggerData != null)
+                {
+                    foreach (var item in triggerData)
+                    {
+                        triggerBuilder = triggerBuilder.UsingJobData(item.Key, item.Value);
+                    }
+                }
+
+                await scheduler.ScheduleJob(triggerBuilder.Build());
+                current = segmentEnd;
+                segmentIndex++;
+            }
+        }
+
+        private static string BuildMinuteField(TimeSpan start, TimeSpan end)
+        {
+            int startMinute = start.Minutes;
+            int endMinuteInclusive = end.Minutes == 0 ? 59 : end.Minutes - 1;
+
+            if (startMinute == 0 && endMinuteInclusive == 59)
+                return "*";
+
+            if (startMinute == endMinuteInclusive)
+                return startMinute.ToString();
+
+            return $"{startMinute}-{endMinuteInclusive}";
+        }
+
+        private static int GetQuartzDayOfWeek(int daysOffset)
+        {
+            var dayOfWeek = DateTime.Now.Date.AddDays(daysOffset).DayOfWeek;
+            return dayOfWeek == DayOfWeek.Sunday ? 1 : (int)dayOfWeek + 1;
+        }
+
         private string GetParsedDate(int daysOffset, out int morningHours, out int morningMinutes, out int eveningHours, out int eveningMinutes)
         {
             var dayOfWeek = DateTime.Now.AddDays(daysOffset).ToString("ddd", new CultureInfo("ru-RU"));

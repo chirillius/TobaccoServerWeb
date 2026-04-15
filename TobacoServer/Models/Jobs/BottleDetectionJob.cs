@@ -36,7 +36,7 @@ namespace TobacoServer.Models.Jobs
 
                 lock (_lock)
                 {
-                    if (_imagesCounter.Count > 3 && DateTime.Now - _imagesCounter.Last().Value > new TimeSpan(0, 0, 10 * interval))
+                    if (_imagesCounter.Count > 3 && DateTime.Now - _imagesCounter.Last().Value > new TimeSpan(0, 0, 12 * interval))
                     {
                         var imageWithMetadata = _defectImageService.GetImageWithBboxAsync(_cachedImagesPaths).Result;
                         foreach (var item in imageWithMetadata)
@@ -77,7 +77,7 @@ namespace TobacoServer.Models.Jobs
 
                     }
 
-                    if (_imagesCounter.Count <= 3 && _imagesCounter.Any() && DateTime.Now - _imagesCounter.Last().Value > new TimeSpan(0, 0, 10 * interval))
+                    if (_imagesCounter.Count <= 3 && _imagesCounter.Any() && DateTime.Now - _imagesCounter.Last().Value > new TimeSpan(0, 0, 12 * interval))
                     {
                         _usedAddresses.Clear();
                         _imagesCounter.Clear();

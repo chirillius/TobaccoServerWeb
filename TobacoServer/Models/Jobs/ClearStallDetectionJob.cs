@@ -22,7 +22,7 @@ namespace TobacoServer.Models.Jobs
                 var dbScope = context.MergedJobDataMap["appDbContextScope"] as IServiceScope;
                 var db = dbScope.ServiceProvider.GetService<AppDbContext>();
                     var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
-                    var interval = int.Parse(context.MergedJobDataMap["period"].ToString()) / 1000 + 60;
+                    var interval = int.Parse(context.MergedJobDataMap["period"].ToString()) / 1000;
                     var zonesConfigurator = new ZonesConfigurator();
                     var zoneNamePart = context.MergedJobDataMap["zoneNamePart"].ToString();
                     var zones = zonesConfigurator.GetZones().Where(x => x.Name.ToLower().Contains(zoneNamePart.ToLower())).ToList();

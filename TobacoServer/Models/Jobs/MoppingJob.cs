@@ -42,7 +42,7 @@ namespace TobacoServer.Models.Jobs
                             DefectImage = new DefectImage()
                         };
                         var defectName = failure.Name;
-                        var falsePositiveDate = DateTime.Now.ToString("dd-MM-yyyy");
+                        var falsePositiveDate = DateTime.Now.ToString("dd_MM_yyyy");
                         _defectImageService.MoveImagesToFalsePositiveWithDateAsync(
                             defectName,
                             falsePositiveDate,
