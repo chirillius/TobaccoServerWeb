@@ -53,7 +53,7 @@ namespace TobacoServer.Models.Jobs
                         using var grid = DefectImagesSaver.CreateImageGrid(_cachedImages);
                         var path = DefectImagesSaver.Save("Grid", grid, "clearStall");
 
-                        _ = db.ClearStallFailures.Add(new ClearStallFailure() { StartDateTime = _checkTimes.First(), EndDateTime = _checkTimes.Last() });
+                        _ = db.ClearStallFailures.Add(new ClearStallFailure() { StartDateTime = _checkTimes.First(), EndDateTime = _checkTimes.Last(), DefectImage = new DefectImage() { Path = path } });
                         _ = db.SaveChanges();
                     }
                     if (_checkTimes.Count >= 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
