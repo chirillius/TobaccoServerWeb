@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using OpenCvSharp;
 using Quartz.Impl.Triggers;
 using TobaccoEntities.Models;
+using TobaccoEntities.Models.DTOs.Vision;
 using TobaccoEntities.Models.Neuro;
 
 namespace TobacoServer.Models.Services
@@ -32,8 +33,8 @@ namespace TobacoServer.Models.Services
         protected string _poseClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["PoseServiceAddress"];
         protected string _moppingDetectionAddress = System.Configuration.ConfigurationManager.AppSettings["MoppingServiceAddress"];
         protected string _cashRegisterClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["CashRegisterServiceAddress"];
-        protected string _clothesClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["ClothesControlServiceAddress"];
-        protected string _stallSurfaceClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["StallSurfaceServiceAddress"];
+        protected string _clothesClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["VideoServiceAddress"];
+        protected string _stallSurfaceClassificationAddress = System.Configuration.ConfigurationManager.AppSettings["VideoServiceAddress"];
         protected string _bottleDetectionAddress = System.Configuration.ConfigurationManager.AppSettings["BottleDetectionServiceAddress"];
         protected string _badgeDetectionAddress = System.Configuration.ConfigurationManager.AppSettings["BadgeDetectionServiceAddress"];
         protected string _lightDetectionAddress = System.Configuration.ConfigurationManager.AppSettings["LightDetectionServiceAddress"];
@@ -85,28 +86,40 @@ namespace TobacoServer.Models.Services
 
         protected async Task<bool> GetClothesColorAsync(Zone zone)
         {
-            var response = await _httpClient.PostAsync(_clothesClassificationAddress + "are-clothes-black", JsonContent.Create(new Dictionary<string, object>()
-                {
-                    { "rectangle", zone.Rectangle },
-                    { "cameraAddress", zone.CameraAddress }
+            var response = await _httpClient.PostAsync(_clothesClassificationAddress + "are-clothes-black", JsonContent.Create(new ClothesColorRequest
+            {
+                Rectangle = zone.Rectangle,
+                CameraAddress = zone.CameraAddress
             }));
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
             {
                 throw new Exception(await response.Content.ReadAsStringAsync());
             }
-            var result = JsonConvert.DeserializeObject<Dictionary<string, bool>>(await response.Content.ReadAsStringAsync())["areClothesBlack"];
-            return result;
+
+            var payload = await response.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<ClothesColorResponse>(payload)
+                ?? throw new Exception("Не удалось получить результат анализа цвета одежды.");
+
+            return result.AreClothesBlack;
         }
 
         protected async Task<bool> IsSurfaceClearAsync(Zone zone)
         {
-            var response = await _httpClient.PostAsync(_stallSurfaceClassificationAddress + "is-surface-clear", JsonContent.Create(new Dictionary<string, object>()
-                {
-                    { "rectangle", zone.Rectangle },
-                    { "cameraAddress", zone.CameraAddress }
+            var response = await _httpClient.PostAsync(_stallSurfaceClassificationAddress + "is-surface-clear", JsonContent.Create(new ClearStallRequest
+            {
+                Rectangle = zone.Rectangle,
+                CameraAddress = zone.CameraAddress
             }));
-            var result = JsonConvert.DeserializeObject<Dictionary<string, bool>>(await response.Content.ReadAsStringAsync())["clear"];
-            return result;
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception(await response.Content.ReadAsStringAsync());
+            }
+
+            var payload = await response.Content.ReadAsStringAsync();
+            var result = JsonConvert.DeserializeObject<ClearStallResponse>(payload)
+                ?? throw new Exception("Не удалось получить результат анализа поверхности.");
+
+            return result.Clear;
         }
 
         protected async Task<string> IsMoppingDetectedAsync(Zone zone)
