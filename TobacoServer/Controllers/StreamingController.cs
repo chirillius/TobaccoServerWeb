@@ -21,21 +21,28 @@ namespace TobacoServer.Controllers
             _streamingHandlerService = streamingHandlerService;
         }
 
+        private static string NormalizeQuality(string? quality)
+        {
+            return string.Equals(quality, "main", StringComparison.OrdinalIgnoreCase)
+                ? "main"
+                : "secondary";
+        }
 
         [HttpGet]
         [Route("handshake/{id}")]
-        public IActionResult Handshake(int id, [FromQuery] string userId)
+        public IActionResult Handshake(int id, [FromQuery] string userId, [FromQuery] string? quality)
         {
-            var key = _streamingHandlerService.CreateEmptySlot(id, _currentStoreHandlingService);
-            _streamingHandlerService.TakeSlot(id, userId);
+            var normalizedQuality = NormalizeQuality(quality);
+            var key = _streamingHandlerService.CreateEmptySlot(id, _currentStoreHandlingService, normalizedQuality);
+            _streamingHandlerService.TakeSlot(id, userId, normalizedQuality);
             return Ok(key);
         }
 
         [HttpGet]
         [Route("disconnect/{id}")]
-        public IActionResult Disconnect(int id, [FromQuery] string userId)
+        public IActionResult Disconnect(int id, [FromQuery] string userId, [FromQuery] string? quality)
         {
-            _streamingHandlerService.ReleaseSlot(id, userId);
+            _streamingHandlerService.ReleaseSlot(id, userId, NormalizeQuality(quality));
             return Ok();
         }
 
@@ -45,11 +52,12 @@ namespace TobacoServer.Controllers
         {
             var parts = url.Split('/');
             var id = int.Parse(parts[0]);
+            var quality = NormalizeQuality(parts.Length > 2 ? parts[1] : null);
             var fileName = parts.Last();
 
-            _streamingHandlerService.TouchSlotActivity(id);
+            _streamingHandlerService.TouchSlotActivity(id, quality);
 
-            var dir = Path.Combine(Directory.GetCurrentDirectory(), "Playlists", id.ToString());
+            var dir = Path.Combine(Directory.GetCurrentDirectory(), "Playlists", id.ToString(), quality);
             var filePath = Path.Combine(dir, fileName);
 
             var timeoutMs = 3000;

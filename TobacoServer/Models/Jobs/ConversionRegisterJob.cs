@@ -2,6 +2,7 @@
 using Quartz;
 using TobaccoEntities.Models;
 using TobacoServer.Models.DbContext;
+using TobacoServer.Models.ImageSavers;
 using TobacoServer.Models.Services;
 
 namespace TobacoServer.Models.Jobs
@@ -50,7 +51,6 @@ namespace TobacoServer.Models.Jobs
             if (nextFireTime.HasValue && nextFireTime.Value.ToLocalTime().DateTime > thresholdDateTime)
             {
                 await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
-
             }
 
             if (conversionRegisterZone?.ConversionCounting?.EntryBand is null)
@@ -74,7 +74,14 @@ namespace TobacoServer.Models.Jobs
             if (directionalCount.NewEntries > 0)
             {
                 _totalPeopleCounter += directionalCount.NewEntries;
+                var conversionEvent = await CreateConversionEventAsync(
+                    videoService,
+                    conversionRegisterZone,
+                    now,
+                    directionalCount.NewEntries);
+                db.ConversionRegisterEvents.Add(conversionEvent);
                 await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
+                await db.SaveChangesAsync();
             }
         }
 
@@ -118,7 +125,7 @@ namespace TobacoServer.Models.Jobs
 
             if (existingRecord is null)
             {
-                _ = db.ConversionRegister.Add(new ConversionRegister
+                db.ConversionRegister.Add(new ConversionRegister
                 {
                     DateTime = targetDate,
                     PeopleNumber = peopleNumber,
@@ -132,6 +139,28 @@ namespace TobacoServer.Models.Jobs
             }
 
             await db.SaveChangesAsync();
+        }
+
+        private static async Task<ConversionRegisterEvent> CreateConversionEventAsync(
+            VideoCacheService videoService,
+            Zone conversionZone,
+            DateTime eventDateTime,
+            int peopleNumber)
+        {
+            string? imagePath = null;
+
+            using var fullFrame = await videoService.TakeShotAsync(conversionZone.CameraAddress);
+            if (!fullFrame.Empty())
+            {
+                imagePath = DefectImagesSaver.Save("FullFrame", fullFrame, "conversion");
+            }
+
+            return new ConversionRegisterEvent
+            {
+                DateTime = eventDateTime,
+                PeopleNumber = peopleNumber,
+                DefectImage = new DefectImage { Path = imagePath ?? string.Empty }
+            };
         }
     }
 }

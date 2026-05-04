@@ -62,6 +62,7 @@ namespace TobacoServer.Controllers
                 "mopping" => "mopping",
                 "clothes" => "clothes",
                 "surfaceclear" => "clearStall",
+                "conversion" => "conversion",
                 "bottles" => "bottles",
                 "inactivesalesman" => "inactiveSalesman",
                 "badge" => "badge",
@@ -209,6 +210,7 @@ namespace TobacoServer.Controllers
                 "mopping" => await MarkVerifiedAsync(_db.MoppingFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "clothes" => await MarkVerifiedAsync(_db.ClothesControlFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "clearstall" => await MarkVerifiedAsync(_db.ClearStallFailures.FirstOrDefaultAsync(x => x.Id == id)),
+                "conversion" => await MarkVerifiedAsync(_db.ConversionRegisterEvents.FirstOrDefaultAsync(x => x.Id == id)),
                 "bottle" => await MarkVerifiedAsync(_db.BottleFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "inactivesalesman" => await MarkVerifiedAsync(_db.InactiveSalesmanFailures.FirstOrDefaultAsync(x => x.Id == id)),
                 "badge" => await MarkVerifiedAsync(_db.BadgeFailures.FirstOrDefaultAsync(x => x.Id == id)),
@@ -228,6 +230,37 @@ namespace TobacoServer.Controllers
             return NoContent();
         }
 
+
+        [HttpGet]
+        [Route("conversion")]
+        public async Task<List<ConversionRegisterEvent>> GetConversionRegisters([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            var defects = await _db.ConversionRegisterEvents
+                .Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime)
+                .OrderByDescending(x => x.DateTime)
+                .Include(x => x.DefectImage)
+                .ToListAsync();
+
+            defects.ForEach(x =>
+            {
+                if (x.DefectImage is not null)
+                {
+                    x.DefectImage.Path = "";
+                }
+            });
+
+            return defects;
+        }
+
+        [HttpGet]
+        [Route("conversion-summary")]
+        public async Task<List<ConversionRegister>> GetConversionSummary([FromQuery] DateTime startDateTime, [FromQuery] DateTime endDateTime)
+        {
+            return await _db.ConversionRegister
+                .Where(x => x.DateTime >= startDateTime && x.DateTime <= endDateTime)
+                .OrderByDescending(x => x.DateTime)
+                .ToListAsync();
+        }
 
         [HttpGet]
         [Route("delays")]

@@ -5,10 +5,13 @@ namespace TobacoServer.Services
 {
     public class StreamingHandlerService : IDisposable
     {
-        private static readonly Dictionary<int, Process> _processes = new();
-        private static readonly Dictionary<int, string> _keys = new();
-        private static readonly Dictionary<int, HashSet<string>> _consumersByUser = new();
-        private static readonly Dictionary<int, DateTime> _lastActivityUtc = new();
+        private const string MainQuality = "main";
+        private const string SecondaryQuality = "secondary";
+
+        private static readonly Dictionary<string, Process> _processes = new();
+        private static readonly Dictionary<string, string> _keys = new();
+        private static readonly Dictionary<string, HashSet<string>> _consumersByUser = new();
+        private static readonly Dictionary<string, DateTime> _lastActivityUtc = new();
         private static readonly object _lock = new();
         private static readonly TimeSpan _streamInactivityTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan _cleanupInterval = TimeSpan.FromSeconds(5);
@@ -35,22 +38,36 @@ namespace TobacoServer.Services
             return sb.ToString();
         }
 
-        public string CreateEmptySlot(int id, CurrentStoreHandlingService currentStoreHandlingService)
+        private static string NormalizeQuality(string? quality)
+        {
+            return string.Equals(quality, MainQuality, StringComparison.OrdinalIgnoreCase)
+                ? MainQuality
+                : SecondaryQuality;
+        }
+
+        private static string BuildSlotKey(int id, string? quality)
+        {
+            return $"{id}:{NormalizeQuality(quality)}";
+        }
+
+        public string CreateEmptySlot(int id, CurrentStoreHandlingService currentStoreHandlingService, string? quality = null)
         {
             lock (_lock)
             {
-                var dir = Path.Combine(_playlistsPath, id.ToString());
+                var normalizedQuality = NormalizeQuality(quality);
+                var slotKey = BuildSlotKey(id, normalizedQuality);
+                var dir = Path.Combine(_playlistsPath, id.ToString(), normalizedQuality);
 
-                if (_processes.TryGetValue(id, out var existingProcess) && _keys.TryGetValue(id, out var existingToken))
+                if (_processes.TryGetValue(slotKey, out var existingProcess) && _keys.TryGetValue(slotKey, out var existingToken))
                 {
                     var existingPlaylistPath = Path.Combine(dir, $"{existingToken}.m3u8");
                     if (!existingProcess.HasExited && File.Exists(existingPlaylistPath))
                     {
-                        _lastActivityUtc[id] = DateTime.UtcNow;
+                        _lastActivityUtc[slotKey] = DateTime.UtcNow;
                         return existingToken;
                     }
 
-                    StopSlotCore(id);
+                    StopSlotCore(slotKey);
                 }
 
                 Directory.CreateDirectory(dir);
@@ -67,12 +84,19 @@ namespace TobacoServer.Services
 
                 var token = GenerateRandomKey();
                 var playlistPath = Path.Combine(dir, $"{token}.m3u8");
+                var streamAddress = normalizedQuality == MainQuality || string.IsNullOrWhiteSpace(camera.StreamAddress)
+                    ? camera.Address
+                    : camera.StreamAddress;
 
+                var segmentPath = Path.Combine(dir, "segment_%05d.ts");
                 var args =
-                    $"-i {camera.Address} " +
-                    "-c:v copy -c:a aac -g 25 " +
-                    "-hls_time 2 -hls_list_size 100 " +
-                    $"-hls_segment_filename \"{dir}/segment_%03d.ts\" " +
+                    "-rtsp_transport tcp " +
+                    "-fflags +genpts " +
+                    $"-i \"{streamAddress}\" " +
+                    "-c:v copy -an " +
+                    "-hls_time 2 -hls_list_size 12 -hls_delete_threshold 8 " +
+                    "-hls_flags delete_segments+temp_file " +
+                    $"-hls_segment_filename \"{segmentPath}\" " +
                     $"\"{playlistPath}\"";
 
                 var startInfo = new ProcessStartInfo
@@ -90,28 +114,30 @@ namespace TobacoServer.Services
                 process.Start();
                 process.BeginErrorReadLine();
 
-                _processes[id] = process;
-                _keys[id] = token;
-                _consumersByUser[id] = new HashSet<string>(StringComparer.Ordinal);
-                _lastActivityUtc[id] = DateTime.UtcNow;
+                _processes[slotKey] = process;
+                _keys[slotKey] = token;
+                _consumersByUser[slotKey] = new HashSet<string>(StringComparer.Ordinal);
+                _lastActivityUtc[slotKey] = DateTime.UtcNow;
 
                 return token;
             }
         }
 
-        public void TakeSlot(int id, string userId)
+        public void TakeSlot(int id, string userId, string? quality = null)
         {
             lock (_lock)
             {
-                if (!_processes.ContainsKey(id))
+                var slotKey = BuildSlotKey(id, quality);
+
+                if (!_processes.ContainsKey(slotKey))
                 {
                     return;
                 }
 
-                if (!_consumersByUser.TryGetValue(id, out var users))
+                if (!_consumersByUser.TryGetValue(slotKey, out var users))
                 {
                     users = new HashSet<string>(StringComparer.Ordinal);
-                    _consumersByUser[id] = users;
+                    _consumersByUser[slotKey] = users;
                 }
 
                 if (!string.IsNullOrWhiteSpace(userId))
@@ -119,41 +145,45 @@ namespace TobacoServer.Services
                     users.Add(userId);
                 }
 
-                _lastActivityUtc[id] = DateTime.UtcNow;
+                _lastActivityUtc[slotKey] = DateTime.UtcNow;
             }
         }
 
-        public void TouchSlotActivity(int id)
+        public void TouchSlotActivity(int id, string? quality = null)
         {
             lock (_lock)
             {
-                if (_processes.ContainsKey(id))
+                var slotKey = BuildSlotKey(id, quality);
+
+                if (_processes.ContainsKey(slotKey))
                 {
-                    _lastActivityUtc[id] = DateTime.UtcNow;
+                    _lastActivityUtc[slotKey] = DateTime.UtcNow;
                 }
             }
         }
 
-        public void ReleaseSlot(int id, string userId)
+        public void ReleaseSlot(int id, string userId, string? quality = null)
         {
             lock (_lock)
             {
-                if (!_processes.ContainsKey(id))
+                var slotKey = BuildSlotKey(id, quality);
+
+                if (!_processes.ContainsKey(slotKey))
                 {
                     return;
                 }
 
-                if (_consumersByUser.TryGetValue(id, out var users) && !string.IsNullOrWhiteSpace(userId))
+                if (_consumersByUser.TryGetValue(slotKey, out var users) && !string.IsNullOrWhiteSpace(userId))
                 {
                     users.Remove(userId);
                     if (users.Count > 0)
                     {
-                        _lastActivityUtc[id] = DateTime.UtcNow;
+                        _lastActivityUtc[slotKey] = DateTime.UtcNow;
                         return;
                     }
                 }
 
-                StopSlotCore(id);
+                StopSlotCore(slotKey);
             }
         }
 
@@ -162,26 +192,26 @@ namespace TobacoServer.Services
             lock (_lock)
             {
                 var now = DateTime.UtcNow;
-                var staleIds = _lastActivityUtc
+                var staleSlotKeys = _lastActivityUtc
                     .Where(x => now - x.Value >= _streamInactivityTimeout)
                     .Select(x => x.Key)
                     .ToList();
 
-                foreach (var id in staleIds)
+                foreach (var slotKey in staleSlotKeys)
                 {
-                    StopSlotCore(id);
+                    StopSlotCore(slotKey);
                 }
             }
         }
 
-        private void StopSlotCore(int id)
+        private void StopSlotCore(string slotKey)
         {
-            if (!_processes.TryGetValue(id, out var process))
+            if (!_processes.TryGetValue(slotKey, out var process))
             {
-                _keys.Remove(id);
-                _consumersByUser.Remove(id);
-                _lastActivityUtc.Remove(id);
-                CleanupPlaylist(id);
+                _keys.Remove(slotKey);
+                _consumersByUser.Remove(slotKey);
+                _lastActivityUtc.Remove(slotKey);
+                CleanupPlaylist(slotKey);
                 return;
             }
 
@@ -211,17 +241,20 @@ namespace TobacoServer.Services
                 process.Dispose();
             }
 
-            _processes.Remove(id);
-            _keys.Remove(id);
-            _consumersByUser.Remove(id);
-            _lastActivityUtc.Remove(id);
+            _processes.Remove(slotKey);
+            _keys.Remove(slotKey);
+            _consumersByUser.Remove(slotKey);
+            _lastActivityUtc.Remove(slotKey);
 
-            CleanupPlaylist(id);
+            CleanupPlaylist(slotKey);
         }
 
-        private void CleanupPlaylist(int id)
+        private void CleanupPlaylist(string slotKey)
         {
-            var dir = Path.Combine(_playlistsPath, id.ToString());
+            var parts = slotKey.Split(':', 2);
+            var id = parts[0];
+            var quality = parts.Length > 1 ? parts[1] : SecondaryQuality;
+            var dir = Path.Combine(_playlistsPath, id, quality);
 
             try
             {
@@ -236,7 +269,7 @@ namespace TobacoServer.Services
             }
         }
 
-        public string GetKey(int id) => _keys[id];
+        public string GetKey(int id, string? quality = null) => _keys[BuildSlotKey(id, quality)];
 
         public void Dispose()
         {
