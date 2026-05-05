@@ -14,6 +14,11 @@ namespace TobacoServer.Models.Jobs
         private static object _lock = new object();
         private static List<Mat> _cachedImages = new List<Mat>();
 
+        private static bool HasValidCachedImages()
+        {
+            return _cachedImages.Any(image => image is not null && !image.Empty());
+        }
+
         public async Task Execute(IJobExecutionContext context)
         {
             var logger = context.MergedJobDataMap["logger"] as ILogger;
@@ -50,11 +55,21 @@ namespace TobacoServer.Models.Jobs
                 {
                     if (_checkTimes.Count > 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
                     {
-                        using var grid = DefectImagesSaver.CreateImageGrid(_cachedImages);
-                        var path = DefectImagesSaver.Save("Grid", grid, "clearStall");
+                        if (HasValidCachedImages())
+                        {
+                            using var grid = DefectImagesSaver.CreateImageGrid(_cachedImages);
+                            var path = DefectImagesSaver.Save("Grid", grid, "clearStall");
 
-                        _ = db.ClearStallFailures.Add(new ClearStallFailure() { StartDateTime = _checkTimes.First(), EndDateTime = _checkTimes.Last(), DefectImage = new DefectImage() { Path = path } });
-                        _ = db.SaveChanges();
+                            _ = db.ClearStallFailures.Add(new ClearStallFailure() { StartDateTime = _checkTimes.First(), EndDateTime = _checkTimes.Last() });
+                            _ = db.SaveChanges();
+                        }
+                        else
+                        {
+                            logger?.LogWarning(
+                                "ClearStallDetectionJob skipped saving defect from {StartDateTime} to {EndDateTime} because no valid cached images were available.",
+                                _checkTimes.First(),
+                                _checkTimes.Last());
+                        }
                     }
                     if (_checkTimes.Count >= 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
                     {
@@ -66,20 +81,37 @@ namespace TobacoServer.Models.Jobs
 
                 var stallStates = await Task.WhenAll(zones.Select(x => videoService.IsStallSurfaceClearAsync(x)));
                 var isDetected = stallStates.Any(x => x == false);
+                var shouldCaptureImages = false;
 
                 lock (_lock)
                 {
-                    if (isDetected && (_checkTimes.Count == 0 || _checkTimes.Count > 0 && DateTime.Now - _checkTimes.Last() < new TimeSpan(0, 0, interval)))
+                    var now = DateTime.Now;
+                    if (isDetected && (_checkTimes.Count == 0 || _checkTimes.Count > 0 && now - _checkTimes.Last() < new TimeSpan(0, 0, interval)))
                     {
-                        if (!_cachedImages.Any() && _checkTimes.Count > 1)
+                        _checkTimes.Add(now);
+                        shouldCaptureImages = !HasValidCachedImages() && _checkTimes.Count > 1;
+                    }
+                }
+
+                if (shouldCaptureImages)
+                {
+                    var shots = await Task.WhenAll(zones.Select(zone => videoService.TakeShotAsync(zone.CameraAddress)));
+                    var validShots = shots.Where(image => image is not null && !image.Empty()).ToList();
+                    foreach (var invalidShot in shots.Where(image => image is null || image.Empty()))
+                    {
+                        invalidShot?.Dispose();
+                    }
+
+                    lock (_lock)
+                    {
+                        if (!HasValidCachedImages())
                         {
-                            foreach (var zone in zones)
-                            {
-                                var image = videoService.TakeShotAsync(zone.CameraAddress).Result;
-                                _cachedImages.Add(image);
-                            }
+                            _cachedImages.AddRange(validShots);
                         }
-                        _checkTimes.Add(DateTime.Now);
+                        else
+                        {
+                            validShots.ForEach(image => image.Dispose());
+                        }
                     }
                 }
             }

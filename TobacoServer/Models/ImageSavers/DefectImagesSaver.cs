@@ -12,20 +12,24 @@ namespace TobacoServer.Models.ImageSavers
         {
             lock (_locker)
             {
-                try
+                if (mat is null || mat.Empty())
                 {
-                    var path = Path.Join(Directory.GetCurrentDirectory(), "Images", DateOnly.FromDateTime(DateTime.Now).ToString());
-                    var root = EnsureTodaysDirectoryCreated(path);
-                    path = Path.Join(root.FullName, defectName);
-                    var defectDirectory = EnsureTodaysDirectoryCreated(path);
-                    var filepath = $"{defectDirectory.FullName}/{zoneName}_{DateTime.Now.ToString("HH_mm_ss")}.jpeg";
-                    var result = Cv2.ImWrite(filepath, mat);
-                    return filepath;
+                    throw new InvalidOperationException($"Cannot save empty defect image for '{defectName}' in zone '{zoneName}'.");
                 }
-                catch (Exception ex)
+
+                var path = Path.Join(Directory.GetCurrentDirectory(), "Images", DateOnly.FromDateTime(DateTime.Now).ToString());
+                var root = EnsureTodaysDirectoryCreated(path);
+                path = Path.Join(root.FullName, defectName);
+                var defectDirectory = EnsureTodaysDirectoryCreated(path);
+                var filepath = $"{defectDirectory.FullName}/{zoneName}_{DateTime.Now.ToString("HH_mm_ss")}.jpeg";
+                var result = Cv2.ImWrite(filepath, mat);
+
+                if (!result)
                 {
-                    throw;
+                    throw new InvalidOperationException($"Failed to save defect image '{filepath}'.");
                 }
+
+                return filepath;
             }
         }
 
@@ -35,11 +39,15 @@ namespace TobacoServer.Models.ImageSavers
             if (images == null || images.Count == 0)
                 return new Mat();
 
+            var validImages = images.Where(img => img is not null && !img.Empty()).ToList();
+            if (validImages.Count == 0)
+                return new Mat();
+
             // количество колонок по умолчанию = sqrt(N)
             if (cols == -1)
-                cols = (int)Math.Ceiling(Math.Sqrt(images.Count));
+                cols = (int)Math.Ceiling(Math.Sqrt(validImages.Count));
 
-            int rows = (int)Math.Ceiling((double)images.Count / cols);
+            int rows = (int)Math.Ceiling((double)validImages.Count / cols);
 
             // 🔹 размер ячейки (разбиваем FullHD на сетку)
             int cellWidth = 1920 / cols;
@@ -48,11 +56,8 @@ namespace TobacoServer.Models.ImageSavers
 
             // 🔹 приводим все изображения к размеру ячеек
             List<Mat> resizedImages = new List<Mat>();
-            foreach (var img in images)
+            foreach (var img in validImages)
             {
-                if (img.Empty())
-                    continue;
-
                 Mat resized = new Mat();
                 Cv2.Resize(img, resized, cellSize);
                 resizedImages.Add(resized);
