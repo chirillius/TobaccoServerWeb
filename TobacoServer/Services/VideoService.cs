@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using OpenCvSharp;
 using Quartz.Impl.Triggers;
+using System;
 using TobaccoEntities.Models;
 using TobaccoEntities.Models.DTOs.Vision;
 using TobaccoEntities.Models.Neuro;
@@ -146,6 +147,20 @@ namespace TobacoServer.Models.Services
             var result = JsonConvert.DeserializeObject<Dictionary<string, bool>>(await response.Content.ReadAsStringAsync())["food"];
             return result;
         }
+
+        protected async Task<ServiceNearCabinetAnalysisResponse> AnalyzeServiceNearCabinetAsync(ServiceNearCabinetAnalysisRequest request)
+        {
+            var response = await _httpClient.PostAsync(_peopleDetectionAddress + "service-near-cabinet/analyze", JsonContent.Create(request));
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception(await response.Content.ReadAsStringAsync());
+            }
+
+            var payload = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<ServiceNearCabinetAnalysisResponse>(payload)
+                ?? new ServiceNearCabinetAnalysisResponse();
+        }
+
         protected async Task<string> FindPhonesAsync(Zone zone)
         {
             var response = await _httpClient.PostAsync(_phoneDetectionAddress + "phones", JsonContent.Create(zone));

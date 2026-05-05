@@ -1,7 +1,9 @@
 ﻿using OpenCvSharp;
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using TobaccoEntities.Models;
+using TobaccoEntities.Models.DTOs.Vision;
 using TobaccoEntities.Models.Neuro;
 
 namespace TobacoServer.Models.Services
@@ -102,6 +104,11 @@ namespace TobacoServer.Models.Services
         public async Task<bool> IsFoodDetectedAsync(Zone zone)
         {
             return await base.IsFoodDetectedAsync(zone);
+        }
+
+        public async Task<ServiceNearCabinetAnalysisResponse> AnalyzeServiceNearCabinetAsync(ServiceNearCabinetAnalysisRequest request)
+        {
+            return await base.AnalyzeServiceNearCabinetAsync(request);
         }
 
         public async Task<string> FindPhonesAsync(Zone zone)
