@@ -7,7 +7,6 @@ using System;
 using System.Collections;
 using System.Diagnostics;
 using System.Globalization;
-using System.Reflection.Metadata;
 using TobaccoEntities.Models;
 using TobacoServer.Models.DbContext;
 using TobacoServer.Models.Jobs;
@@ -322,7 +321,12 @@ namespace TobacoServer.Models
                             i,
                             start,
                             end,
-                            period);
+                            period,
+                            new Dictionary<string, string>
+                            {
+                                ["period"] = period.ToString(),
+                                ["intervalEndTime"] = end.ToString(@"hh\:mm\:ss")
+                            });
                         intervalIndex++;
                     }
                 }
@@ -368,6 +372,7 @@ namespace TobacoServer.Models
                             period,
                             new Dictionary<string, string>
                             {
+                                ["period"] = period.ToString(),
                                 ["intervalKey"] = $"{GetQuartzDayOfWeek(i)}_{intervalIndex}",
                                 ["intervalEndTime"] = end.ToString(@"hh\:mm\:ss")
                             });

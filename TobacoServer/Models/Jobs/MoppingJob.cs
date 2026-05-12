@@ -26,15 +26,16 @@ namespace TobacoServer.Models.Jobs
                 var db = dbScope.ServiceProvider.GetService<AppDbContext>();
                 var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
                 var zoneNamePart = context.MergedJobDataMap["zoneNamePart"].ToString();
+                var intervalEndTime = TimeSpan.Parse(context.MergedJobDataMap["intervalEndTime"].ToString());
+                var period = TimeSpan.FromMilliseconds(Convert.ToInt32(context.MergedJobDataMap["period"]));
                 var zonesConfigurator = new ZonesConfigurator();
 
                 var zones = zonesConfigurator.GetZones();
                 var moppingZones = zones.Where(x => x.Name.ToLower().Contains(zoneNamePart.ToLower())).ToList();
-                var z = DateTimeOffset.Parse(DateTime.Now.Add(new TimeSpan(3, 0, 0)).ToString());
 
                 lock (_checkTimesLock)
                 {
-                    if (context.NextFireTimeUtc.Value.LocalDateTime > z.LocalDateTime)
+                    if (ScheduledWindowGuard.IsFinalFireInConfiguredWindow(DateTime.Now, intervalEndTime, period))
                     {
                         var failure = new MoppingFailure()
                         {

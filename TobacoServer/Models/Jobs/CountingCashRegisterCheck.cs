@@ -29,10 +29,11 @@ internal class CashRegisterRecountingJob : IJob
             var zones = zonesConfigurator.GetZones();
             var intervalKey = context.MergedJobDataMap["intervalKey"].ToString();
             var intervalEndTime = TimeSpan.Parse(context.MergedJobDataMap["intervalEndTime"].ToString());
+            var period = TimeSpan.FromMilliseconds(Convert.ToInt32(context.MergedJobDataMap["period"]));
             var clientZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower())).ToList();
             var cashRegisterZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["zoneNamePart"].ToString().ToLower())).ToList();
             CashRegisterRecountingStatus.EnterWindow(intervalKey);
-            var isLastFireInCurrentWindow = IsLastFireInCurrentWindow(context, intervalEndTime);
+            var isLastFireInCurrentWindow = IsLastFireInCurrentWindow(DateTime.Now, intervalEndTime, period);
 
             lock (_lock)
             {
@@ -101,12 +102,8 @@ internal class CashRegisterRecountingJob : IJob
         }
     }
 
-    private static bool IsLastFireInCurrentWindow(IJobExecutionContext context, TimeSpan intervalEndTime)
+    private static bool IsLastFireInCurrentWindow(DateTime now, TimeSpan intervalEndTime, TimeSpan period)
     {
-        var nextFireTime = context.NextFireTimeUtc?.LocalDateTime;
-        if (nextFireTime == null)
-            return true;
-
-        return nextFireTime.Value.Date > DateTime.Now.Date || nextFireTime.Value.TimeOfDay >= intervalEndTime;
+        return ScheduledWindowGuard.IsFinalFireInConfiguredWindow(now, intervalEndTime, period);
     }
 }

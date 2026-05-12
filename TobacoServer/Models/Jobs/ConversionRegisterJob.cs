@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using OpenCvSharp;
 using Quartz;
 using TobaccoEntities.Models;
 using TobacoServer.Models.DbContext;
@@ -12,6 +13,10 @@ namespace TobacoServer.Models.Jobs
     {
         private static int _totalPeopleCounter = 0;
         private static DateTime _currentRegisterDate = DateTime.MinValue;
+        private static readonly object _sessionLock = new();
+        private static readonly ConversionSessionTracker _sessionTracker = new(TimeSpan.FromSeconds(300));
+        private static readonly List<Mat> _sessionImages = new();
+        private const int MaxSessionImages = 9;
 
         public async Task Execute(IJobExecutionContext context)
         {
@@ -30,6 +35,7 @@ namespace TobacoServer.Models.Jobs
 
             if (_currentRegisterDate != today)
             {
+                await TryFinalizeActiveSessionAsync(db, now, force: true);
                 await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
                 await LoadCounterForDateAsync(db, today);
             }
@@ -41,6 +47,7 @@ namespace TobacoServer.Models.Jobs
 
             if (string.IsNullOrWhiteSpace(conversionZoneNamePart) || string.IsNullOrWhiteSpace(stallZoneNamePart))
             {
+                await TryFinalizeActiveSessionAsync(db, now);
                 return;
             }
 
@@ -50,39 +57,41 @@ namespace TobacoServer.Models.Jobs
 
             if (nextFireTime.HasValue && nextFireTime.Value.ToLocalTime().DateTime > thresholdDateTime)
             {
+                await TryFinalizeActiveSessionAsync(db, now, force: true);
                 await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
             }
 
             if (conversionRegisterZone?.ConversionCounting?.EntryBand is null)
             {
+                await TryFinalizeActiveSessionAsync(db, now);
                 return;
             }
 
             var stallZones = zones.Where(x => x.Name.ToLower().Contains(stallZoneNamePart)).ToList();
             if (stallZones.Count == 0)
             {
+                await TryFinalizeActiveSessionAsync(db, now);
                 return;
             }
 
             var stallCounts = await Task.WhenAll(stallZones.Select(x => videoService.GetPeopleNumberAsync(x)));
             if (stallCounts.Sum() <= 0)
             {
+                await TryFinalizeActiveSessionAsync(db, now);
                 return;
             }
 
             var directionalCount = await videoService.GetDirectionalEntryCountAsync(conversionRegisterZone);
-            if (directionalCount.NewEntries > 0)
+            if (directionalCount.NewEntries > 0 || HasActiveSession())
             {
-                _totalPeopleCounter += directionalCount.NewEntries;
-                var conversionEvent = await CreateConversionEventAsync(
-                    videoService,
-                    conversionRegisterZone,
-                    now,
-                    directionalCount.NewEntries);
-                db.ConversionRegisterEvents.Add(conversionEvent);
-                await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
-                await db.SaveChangesAsync();
+                var shouldCapturePhoto = ApplySessionObservation(now, directionalCount);
+                if (shouldCapturePhoto)
+                {
+                    await AddSessionImageAsync(videoService, conversionRegisterZone);
+                }
             }
+
+            await TryFinalizeActiveSessionAsync(db, now);
         }
 
         private static async Task EnsureCounterLoadedAsync(AppDbContext db, DateTime targetDate)
@@ -129,7 +138,7 @@ namespace TobacoServer.Models.Jobs
                 {
                     DateTime = targetDate,
                     PeopleNumber = peopleNumber,
-                    DefectImage = new DefectImage()
+                    DefectImage = CreateDefectImage()
                 });
             }
             else
@@ -141,26 +150,94 @@ namespace TobacoServer.Models.Jobs
             await db.SaveChangesAsync();
         }
 
-        private static async Task<ConversionRegisterEvent> CreateConversionEventAsync(
-            VideoCacheService videoService,
-            Zone conversionZone,
-            DateTime eventDateTime,
-            int peopleNumber)
+        private static bool HasActiveSession()
         {
-            string? imagePath = null;
-
-            using var fullFrame = await videoService.TakeShotAsync(conversionZone.CameraAddress);
-            if (!fullFrame.Empty())
+            lock (_sessionLock)
             {
-                imagePath = DefectImagesSaver.Save("FullFrame", fullFrame, "conversion");
+                return _sessionTracker.HasActiveSession;
+            }
+        }
+
+        private static bool ApplySessionObservation(DateTime now, TobaccoEntities.Models.Neuro.DirectionalEntryCountResponse directionalCount)
+        {
+            lock (_sessionLock)
+            {
+                return _sessionTracker.ApplyObservation(now, directionalCount);
+            }
+        }
+
+        private static async Task AddSessionImageAsync(
+            VideoCacheService videoService,
+            Zone conversionZone)
+        {
+            var fullFrame = await videoService.TakeShotAsync(conversionZone.CameraAddress);
+            if (fullFrame.Empty())
+            {
+                fullFrame.Dispose();
+                return;
             }
 
-            return new ConversionRegisterEvent
+            lock (_sessionLock)
             {
-                DateTime = eventDateTime,
-                PeopleNumber = peopleNumber,
-                DefectImage = new DefectImage { Path = imagePath ?? string.Empty }
-            };
+                _sessionImages.Add(fullFrame);
+                while (_sessionImages.Count > MaxSessionImages)
+                {
+                    var oldestImage = _sessionImages[0];
+                    _sessionImages.RemoveAt(0);
+                    oldestImage.Dispose();
+                }
+            }
+        }
+
+        private static async Task TryFinalizeActiveSessionAsync(AppDbContext db, DateTime now, bool force = false)
+        {
+            ConversionSessionSnapshot? snapshot = null;
+            List<Mat> sessionImages;
+
+            lock (_sessionLock)
+            {
+                if (!_sessionTracker.HasActiveSession || (!force && !_sessionTracker.ShouldFinalize(now)))
+                {
+                    return;
+                }
+
+                snapshot = _sessionTracker.Finalize();
+                sessionImages = _sessionImages.ToList();
+                _sessionImages.Clear();
+            }
+
+            string? imagePath = null;
+            try
+            {
+                if (sessionImages.Count > 0)
+                {
+                    using var grid = DefectImagesSaver.CreateImageGrid(sessionImages);
+                    if (!grid.Empty())
+                    {
+                        imagePath = DefectImagesSaver.Save("Grid", grid, "conversion");
+                    }
+                }
+            }
+            finally
+            {
+                sessionImages.ForEach(x => x.Dispose());
+            }
+
+            _totalPeopleCounter += snapshot.PeopleNumber;
+            await UpsertDailyRegisterAsync(db, _currentRegisterDate, _totalPeopleCounter);
+
+            db.ConversionRegisterEvents.Add(new ConversionRegisterEvent
+            {
+                DateTime = snapshot.StartedAt,
+                PeopleNumber = snapshot.PeopleNumber,
+                DefectImage = CreateDefectImage(imagePath)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        private static DefectImage CreateDefectImage(string? path = null)
+        {
+            return new DefectImage { Path = path ?? string.Empty };
         }
     }
 }
