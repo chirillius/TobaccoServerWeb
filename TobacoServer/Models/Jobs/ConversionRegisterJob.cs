@@ -11,6 +11,7 @@ namespace TobacoServer.Models.Jobs
     [DisallowConcurrentExecution]
     public class ConversionRegisterJob : IJob
     {
+        public const string DefaultConversionZoneName = "Конверсия";
         private static int _totalPeopleCounter = 0;
         private static DateTime _currentRegisterDate = DateTime.MinValue;
         private static readonly object _sessionLock = new();
@@ -42,16 +43,17 @@ namespace TobacoServer.Models.Jobs
 
             var zonesConfigurator = new ZonesConfigurator();
             var zones = zonesConfigurator.GetZones();
-            var conversionZoneNamePart = context.MergedJobDataMap["conversionZoneNamePart"]?.ToString()?.ToLower();
+            var conversionZoneNamePart = context.MergedJobDataMap["conversionZoneNamePart"]?.ToString();
+            var legacyClientZoneNamePart = context.MergedJobDataMap["legacyClientZoneNamePart"]?.ToString();
             var stallZoneNamePart = context.MergedJobDataMap["stallZoneNamePart"]?.ToString()?.ToLower();
 
-            if (string.IsNullOrWhiteSpace(conversionZoneNamePart) || string.IsNullOrWhiteSpace(stallZoneNamePart))
+            if (string.IsNullOrWhiteSpace(stallZoneNamePart))
             {
                 await TryFinalizeActiveSessionAsync(db, now);
                 return;
             }
 
-            var conversionRegisterZone = zones.FirstOrDefault(x => x.Name.ToLower().Contains(conversionZoneNamePart));
+            var conversionRegisterZone = ResolveConversionZone(zones, legacyClientZoneNamePart, conversionZoneNamePart);
             var nextFireTime = context.Trigger.GetNextFireTimeUtc();
             var thresholdDateTime = now.AddHours(1);
 
@@ -238,6 +240,37 @@ namespace TobacoServer.Models.Jobs
         private static DefectImage CreateDefectImage(string? path = null)
         {
             return new DefectImage { Path = path ?? string.Empty };
+        }
+
+        public static Zone? ResolveConversionZone(
+            IEnumerable<Zone> zones,
+            string? legacyClientZoneNamePart,
+            string? configuredConversionZoneNamePart)
+        {
+            var zonesWithEntryBand = zones
+                .Where(zone => zone.ConversionCounting?.EntryBand is not null)
+                .ToList();
+
+            if (zonesWithEntryBand.Count == 0)
+            {
+                return null;
+            }
+
+            return FindZoneByNamePart(zonesWithEntryBand, configuredConversionZoneNamePart)
+                ?? FindZoneByNamePart(zonesWithEntryBand, DefaultConversionZoneName)
+                ?? FindZoneByNamePart(zonesWithEntryBand, legacyClientZoneNamePart)
+                ?? zonesWithEntryBand.First();
+        }
+
+        private static Zone? FindZoneByNamePart(IEnumerable<Zone> zones, string? zoneNamePart)
+        {
+            if (string.IsNullOrWhiteSpace(zoneNamePart))
+            {
+                return null;
+            }
+
+            return zones.FirstOrDefault(zone =>
+                zone.Name.Contains(zoneNamePart, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

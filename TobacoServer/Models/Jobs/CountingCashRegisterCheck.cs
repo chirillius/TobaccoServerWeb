@@ -30,15 +30,22 @@ internal class CashRegisterRecountingJob : IJob
             var intervalKey = context.MergedJobDataMap["intervalKey"].ToString();
             var intervalEndTime = TimeSpan.Parse(context.MergedJobDataMap["intervalEndTime"].ToString());
             var period = TimeSpan.FromMilliseconds(Convert.ToInt32(context.MergedJobDataMap["period"]));
+            var scheduledFireTime = context.FireTimeUtc.LocalDateTime;
             var clientZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["clientZoneNamePart"].ToString().ToLower())).ToList();
             var cashRegisterZones = zones.Where(x => x.Name.ToLower().Contains(context.MergedJobDataMap["zoneNamePart"].ToString().ToLower())).ToList();
             CashRegisterRecountingStatus.EnterWindow(intervalKey);
-            var isLastFireInCurrentWindow = IsLastFireInCurrentWindow(DateTime.Now, intervalEndTime, period);
+            var isLastFireInCurrentWindow = IsLastFireInCurrentWindow(scheduledFireTime, intervalEndTime, period);
 
             lock (_lock)
             {
                 if (isLastFireInCurrentWindow)
                 {
+                    if (!ScheduledWindowGuard.TryClaimFinalFire($"CashRegisterRecountingJob:{intervalKey}", scheduledFireTime, intervalEndTime, period))
+                    {
+                        CashRegisterRecountingStatus.ExitWindow(intervalKey);
+                        return;
+                    }
+
                     if (!_isDetected)
                     {
                         var failure = new CountingCashRegisterFailure()

@@ -212,10 +212,12 @@ namespace TobacoServer.Models
                 job.JobDataMap.Add("logger", _logger);
                 job.JobDataMap.Add("appDbContextScope", scope);
                 job.JobDataMap.Add("videoCacheService", _serviceProvider.GetService<VideoCacheService>());
-                var conversionZoneNamePart = _json.conversionRegister.conversionZoneNamePart ?? _json.conversionRegister.clientZoneNamePart;
+                var conversionZoneNamePart = _json.conversionRegister.conversionZoneNamePart ?? ConversionRegisterJob.DefaultConversionZoneName;
+                var legacyClientZoneNamePart = _json.conversionRegister.clientZoneNamePart;
                 var stallZoneNamePart = _json.conversionRegister.stallZoneNamePart ?? _json.conversionRegister.zoneNamePart;
 
                 job.JobDataMap.Add("conversionZoneNamePart", conversionZoneNamePart);
+                job.JobDataMap.Add("legacyClientZoneNamePart", legacyClientZoneNamePart);
                 job.JobDataMap.Add("stallZoneNamePart", stallZoneNamePart);
                 job.JobDataMap.Add("period", period);
 
@@ -325,6 +327,7 @@ namespace TobacoServer.Models
                             new Dictionary<string, string>
                             {
                                 ["period"] = period.ToString(),
+                                ["intervalKey"] = $"{GetQuartzDayOfWeek(i)}_{intervalIndex}",
                                 ["intervalEndTime"] = end.ToString(@"hh\:mm\:ss")
                             });
                         intervalIndex++;

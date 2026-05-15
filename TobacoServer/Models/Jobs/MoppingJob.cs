@@ -26,8 +26,10 @@ namespace TobacoServer.Models.Jobs
                 var db = dbScope.ServiceProvider.GetService<AppDbContext>();
                 var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService;
                 var zoneNamePart = context.MergedJobDataMap["zoneNamePart"].ToString();
+                var intervalKey = context.MergedJobDataMap["intervalKey"].ToString();
                 var intervalEndTime = TimeSpan.Parse(context.MergedJobDataMap["intervalEndTime"].ToString());
                 var period = TimeSpan.FromMilliseconds(Convert.ToInt32(context.MergedJobDataMap["period"]));
+                var scheduledFireTime = context.FireTimeUtc.LocalDateTime;
                 var zonesConfigurator = new ZonesConfigurator();
 
                 var zones = zonesConfigurator.GetZones();
@@ -35,8 +37,13 @@ namespace TobacoServer.Models.Jobs
 
                 lock (_checkTimesLock)
                 {
-                    if (ScheduledWindowGuard.IsFinalFireInConfiguredWindow(DateTime.Now, intervalEndTime, period))
+                    if (ScheduledWindowGuard.IsFinalFireInConfiguredWindow(scheduledFireTime, intervalEndTime, period))
                     {
+                        if (!ScheduledWindowGuard.TryClaimFinalFire($"MoppingJob:{intervalKey}", scheduledFireTime, intervalEndTime, period))
+                        {
+                            return;
+                        }
+
                         var failure = new MoppingFailure()
                         {
                             DateTime = DateTime.Now,
