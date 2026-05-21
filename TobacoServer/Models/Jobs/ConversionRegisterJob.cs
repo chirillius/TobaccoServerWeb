@@ -15,7 +15,7 @@ namespace TobacoServer.Models.Jobs
         private static int _totalPeopleCounter = 0;
         private static DateTime _currentRegisterDate = DateTime.MinValue;
         private static readonly object _sessionLock = new();
-        private static readonly ConversionSessionTracker _sessionTracker = new(TimeSpan.FromSeconds(300));
+        private static readonly ConversionSessionTracker _sessionTracker = new(TimeSpan.FromSeconds(600));
         private static readonly List<Mat> _sessionImages = new();
         private const int MaxSessionImages = 9;
 
@@ -89,7 +89,7 @@ namespace TobacoServer.Models.Jobs
                 var shouldCapturePhoto = ApplySessionObservation(now, directionalCount);
                 if (shouldCapturePhoto)
                 {
-                    await AddSessionImageAsync(videoService, conversionRegisterZone);
+                    await AddSessionImageAsync(videoService, conversionRegisterZone, directionalCount.ImageBase64);
                 }
             }
 
@@ -170,9 +170,12 @@ namespace TobacoServer.Models.Jobs
 
         private static async Task AddSessionImageAsync(
             VideoCacheService videoService,
-            Zone conversionZone)
+            Zone conversionZone,
+            string? entryImageBase64 = null)
         {
-            var fullFrame = await videoService.TakeShotAsync(conversionZone.CameraAddress);
+            var fullFrame = DecodeEntryImage(entryImageBase64)
+                ?? await videoService.TakeShotAsync(conversionZone.CameraAddress);
+
             if (fullFrame.Empty())
             {
                 fullFrame.Dispose();
@@ -188,6 +191,31 @@ namespace TobacoServer.Models.Jobs
                     _sessionImages.RemoveAt(0);
                     oldestImage.Dispose();
                 }
+            }
+        }
+
+        private static Mat? DecodeEntryImage(string? entryImageBase64)
+        {
+            if (string.IsNullOrWhiteSpace(entryImageBase64))
+            {
+                return null;
+            }
+
+            try
+            {
+                var bytes = Convert.FromBase64String(entryImageBase64);
+                var image = Cv2.ImDecode(bytes, ImreadModes.Color);
+                if (!image.Empty())
+                {
+                    return image;
+                }
+
+                image.Dispose();
+                return null;
+            }
+            catch
+            {
+                return null;
             }
         }
 

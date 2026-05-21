@@ -8,6 +8,13 @@ using TobacoServer.Services.Logging;
 
 namespace TobacoServer.Models.Jobs
 {
+    public enum ClearStallSessionDisposition
+    {
+        None,
+        ResetOnly,
+        SaveAndReset
+    }
+
     public class ClearStallDetectionJob : IJob
     {
         private static List<DateTime> _checkTimes = new List<DateTime>();
@@ -17,6 +24,35 @@ namespace TobacoServer.Models.Jobs
         private static bool HasValidCachedImages()
         {
             return _cachedImages.Any(image => image is not null && !image.Empty());
+        }
+
+        private static TimeSpan GetInactivityThreshold(TimeSpan period)
+        {
+            return TimeSpan.FromTicks(period.Ticks * 2);
+        }
+
+        private static void ResetState()
+        {
+            _checkTimes.Clear();
+            _cachedImages.ForEach(x => x.Dispose());
+            _cachedImages.Clear();
+        }
+
+        public static ClearStallSessionDisposition GetSessionDisposition(int checkTimesCount, DateTime? lastDetectedAt, DateTime now, TimeSpan period)
+        {
+            if (checkTimesCount <= 0 || lastDetectedAt is null || period <= TimeSpan.Zero)
+            {
+                return ClearStallSessionDisposition.None;
+            }
+
+            if (now - lastDetectedAt.Value < GetInactivityThreshold(period))
+            {
+                return ClearStallSessionDisposition.None;
+            }
+
+            return checkTimesCount > 5
+                ? ClearStallSessionDisposition.SaveAndReset
+                : ClearStallSessionDisposition.ResetOnly;
         }
 
         public async Task Execute(IJobExecutionContext context)
@@ -29,7 +65,7 @@ namespace TobacoServer.Models.Jobs
                     ?? throw new InvalidOperationException("AppDbContext scope was not provided for ClearStallDetectionJob.");
                 var videoService = context.MergedJobDataMap["videoCacheService"] as VideoCacheService
                     ?? throw new InvalidOperationException("VideoCacheService was not provided for ClearStallDetectionJob.");
-                var interval = int.Parse(context.MergedJobDataMap["period"].ToString()) / 1000 + 60;
+                var period = TimeSpan.FromMilliseconds(int.Parse(context.MergedJobDataMap["period"].ToString()));
                 var zonesConfigurator = new ZonesConfigurator();
                 var zoneNamePart = context.MergedJobDataMap["zoneNamePart"]?.ToString();
 
@@ -53,7 +89,11 @@ namespace TobacoServer.Models.Jobs
 
                 lock (_lock)
                 {
-                    if (_checkTimes.Count > 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
+                    var now = DateTime.Now;
+                    DateTime? lastDetectedAt = _checkTimes.Count > 0 ? _checkTimes.Last() : null;
+                    var sessionDisposition = GetSessionDisposition(_checkTimes.Count, lastDetectedAt, now, period);
+
+                    if (sessionDisposition == ClearStallSessionDisposition.SaveAndReset)
                     {
                         if (HasValidCachedImages())
                         {
@@ -71,11 +111,10 @@ namespace TobacoServer.Models.Jobs
                                 _checkTimes.Last());
                         }
                     }
-                    if (_checkTimes.Count >= 1 && DateTime.Now - _checkTimes.Last() > new TimeSpan(0, 0, interval))
+
+                    if (sessionDisposition != ClearStallSessionDisposition.None)
                     {
-                        _checkTimes.Clear();
-                        _cachedImages.ForEach(x => x.Dispose());
-                        _cachedImages.Clear();
+                        ResetState();
                     }
                 }
 
@@ -86,7 +125,7 @@ namespace TobacoServer.Models.Jobs
                 lock (_lock)
                 {
                     var now = DateTime.Now;
-                    if (isDetected && (_checkTimes.Count == 0 || _checkTimes.Count > 0 && now - _checkTimes.Last() < new TimeSpan(0, 0, interval)))
+                    if (isDetected && (_checkTimes.Count == 0 || now - _checkTimes.Last() < GetInactivityThreshold(period)))
                     {
                         _checkTimes.Add(now);
                         shouldCaptureImages = !HasValidCachedImages() && _checkTimes.Count > 1;
