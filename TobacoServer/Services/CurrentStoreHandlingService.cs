@@ -22,6 +22,7 @@ namespace TobacoServer.Services
                 {
                     var jsonContent = File.ReadAllText(filePath);
                     _thisStore = JsonConvert.DeserializeObject<Store>(jsonContent) ?? new Store("", "", new List<Camera>());
+                    NormalizeStore(_thisStore);
                 }
             }
         }
@@ -38,9 +39,16 @@ namespace TobacoServer.Services
         {
             lock (_lock)
             {
+                NormalizeStore(store);
                 _thisStore = store;
                 SaveChanges();
             }
+        }
+
+        private static void NormalizeStore(Store store)
+        {
+            store.Cameras ??= [];
+            store.Employees ??= [];
         }
 
         private void SaveChanges()

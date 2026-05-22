@@ -3,9 +3,6 @@ using TobaccoEntities.Models;
 using Newtonsoft.Json;
 using TobacoServer.Services;
 using System.Text;
-using Microsoft.AspNetCore.Authorization;
-using TobacoServer.Models;
-
 namespace TobacoServer.Controllers
 {
     [ApiController]
@@ -21,16 +18,25 @@ namespace TobacoServer.Controllers
             _configuration = configuration;
         }
 
+        private static bool IsStoreConfigured(Store? store)
+        {
+            return store is not null
+                && (!string.IsNullOrWhiteSpace(store.Name)
+                    || !string.IsNullOrWhiteSpace(store.Address)
+                    || (store.Cameras?.Count ?? 0) > 0);
+        }
+
         [HttpGet("store")]
         public IActionResult GetStore()
         {
             try
             {
                 var store = _storeService.GetStore();
-                if (store == null || string.IsNullOrEmpty(store.Name) && string.IsNullOrEmpty(store.Address) && (store.Cameras == null || store.Cameras.Count == 0))
+                if (!IsStoreConfigured(store))
                 {
                     return NoContent();
                 }
+
                 return Ok(store);
             }
             catch (Exception ex)
@@ -48,6 +54,9 @@ namespace TobacoServer.Controllers
             }
             try
             {
+                var currentStore = _storeService.GetStore();
+                store.Cameras ??= currentStore.Cameras ?? [];
+                store.Employees ??= currentStore.Employees ?? [];
                 _storeService.SetStore(store);
                 SendAddressToCentralServer(store.Address);
                 return Ok();
@@ -71,7 +80,6 @@ namespace TobacoServer.Controllers
                     httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Internal-Api-Key", internalApiKey);
                 }
 
-
                 var jsonContent = JsonConvert.SerializeObject(new Store { Address = storeAddress });
                 var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
 
@@ -88,36 +96,13 @@ namespace TobacoServer.Controllers
             }
         }
 
-
-        [HttpGet("checkStoreAddress")]
-
-        public IActionResult CheckStoreAddress([FromQuery] string address)
-        {
-            try
-            {
-                var store = _storeService.GetStore();
-
-                if (store != null && store.Address == address)
-                {
-                    return Ok(true);
-                }
-
-                return Ok(false);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Ошибка сервера: {ex.Message}");
-            }
-        }
-
         [HttpPost]
         [Route("check-store-availability")]
-        public async Task<IActionResult> CheckStoreAvailability([FromBody] string request)
+        public IActionResult CheckStoreAvailability([FromBody] string request)
         {
             try
             {
-                string address = request;
-                if (string.IsNullOrEmpty(address))
+                if (string.IsNullOrEmpty(request))
                 {
                     return BadRequest("Некорректный адрес магазина.");
                 }
@@ -139,7 +124,7 @@ namespace TobacoServer.Controllers
 
                 if (!System.IO.File.Exists(filePath))
                 {
-                    return NotFound("File 'zones.json' not found.");
+                    return NotFound("Файл 'zones.json' не найден.");
                 }
 
                 string fileContent = System.IO.File.ReadAllText(filePath);
@@ -155,7 +140,7 @@ namespace TobacoServer.Controllers
             }
             catch (System.Exception ex)
             {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
+                return StatusCode(500, $"Ошибка сервера: {ex.Message}");
             }
         }
     }
