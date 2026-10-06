@@ -1,0 +1,151 @@
+{
+  "delays": {
+    "isMorningDelaysActive": false,
+    "isEveningLeavingActive": false,
+    "zoneNamePart": "прилавок",
+    "time": {
+      "пн": "9:50 - 22:00",
+      "вт": "9:50 - 22:00",
+      "ср": "9:50 - 22:00",
+      "чт": "9:50 - 22:00",
+      "пт": "9:50 - 22:00",
+      "сб": "9:50 - 22:00",
+      "вс": "9:50 - 22:00"
+    }
+  },
+  "peopleAtStallNumberCheck": {
+    "isActive": false,
+    "period": 5000,
+    "zoneNamePart": "Прилавок"
+  },
+  "cashRegisterCheck": {
+    "isActive": false,
+    "period": 2000,
+    "zoneNamePart": "Касса",
+    "clientZoneNamePart": "Клиентская"
+  },
+  "countingCashRegisterCheck": {
+    "isActive": false,
+    "period": 5000,
+    "zoneNamePart": "Касса",
+    "clientZoneNamePart": "Клиентская",
+    "intervals": [
+      "09:00-11:00",
+      "13:00-15:00",
+      "19:00-21:00"
+    ]
+  },
+  "rumblingRetrieve": {
+    "isActive": false,
+    "period": 150000
+  },
+  "smokeDetection": {
+    "isActive": false,
+    "period": 500,
+    "zoneNamePart": "Дым",
+    "clientZoneNamePart": "Клиентская"
+  },
+  "speechToText": {
+    "isActive": false,
+    "period": 1000,
+    "clientZoneNamePart": "Клиентская",
+    "cameraAddress": ""
+  },
+  "crowdControl": {
+    "isActive": false,
+    "period": 5000,
+    "zoneNamePart": "Клиентская"
+  },
+  "lightDetection": {
+    "isActive": false,
+    "zoneNamePart": "Свет",
+    "period": 60000
+  },
+  "serviceNearCabinet": {
+    "isActive": false,
+    "zoneNamePart": "Шкаф",
+    "stallZoneNamePart": "Прилавок",
+    "clientZoneNamePart": "Клиентская",
+    "period": 2000
+  },
+  "noOneAtStallForTooLong": {
+    "isActive": false,
+    "stallZoneNamePart": "Прилавок",
+    "thresholdInMinutes": 15
+  },
+  "staringAtCamera": {
+    "isActive": false,
+    "cameraAddresses": [],
+    "eyeContactTotalTime": 7,
+    "period": 1000
+  },
+  "humanDetectionBeforeAndAfterShift": {
+    "isActive": false,
+    "period": 10000
+  },
+  "phoneDetection": {
+    "isActive": false,
+    "period": 2000,
+    "zoneNamePart": "Телефон",
+    "clientZoneNamePart": "Клиентская"
+  },
+  "foodDetection": {
+    "isActive": false,
+    "period": 1000,
+    "zoneNamePart": "Еда",
+    "clientZoneNamePart": "Клиентская"
+  },
+  "poseClassification": {
+    "isActive": false,
+    "timeOffsetInMilliseconds": 7000,
+    "lengthOfSamplesListToAverage": 5,
+    "timeDelta": 500,
+    "period": 1000,
+    "zoneNamePart": "Прилавок",
+    "clientZoneNamePart": "Клиентская"
+  },
+  "moppingDetection": {
+    "isActive": false,
+    "period": 2000,
+    "zoneNamePart": "Мойка полов",
+    "intervals": [
+      "09:00-11:00",
+      "13:00-15:00",
+      "19:00-21:00"
+    ]
+  },
+  "clothesControl": {
+    "isActive": false,
+    "periodInMinutes": 30,
+    "zoneNamePart": "Прилавок",
+    "numberOfIterations": 50
+  },
+  "conversionRegister": {
+    "isActive": false,
+    "period": 1500,
+    "zoneNamePart": "Прилавок",
+    "clientZoneNamePart": "Клиентская",
+    "conversionZoneNamePart": "Конверсия"
+  },
+  "clearStallDetection": {
+    "isActive": false,
+    "period": 60000,
+    "zoneNamePart": "Стол"
+  },
+  "bottleDetection": {
+    "isActive": false,
+    "zoneNamePart": "Бутылки",
+    "period": 5000
+  },
+  "badgeDetection": {
+    "isActive": false,
+    "periodInMinutes": 30,
+    "zoneNamePart": "Бейдж"
+  },
+  "abandonedOpenCashRegister": {
+    "isActive": false,
+    "zoneNamePart": "Касса",
+    "stallZoneNamePart": "Прилавок",
+    "period": 15000
+  }
+}

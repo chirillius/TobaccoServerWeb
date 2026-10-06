@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.9.34622.214
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TobacoServer", "TobacoServer\TobacoServer.csproj", "{12D63C41-A82D-47BA-965B-139B439C3FFE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TobacoServer", "TobaccoServer\TobacoServer.csproj", "{12D63C41-A82D-47BA-965B-139B439C3FFE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TobaccoEntities", "..\TobaccoEntitiesWeb\TobaccoEntities\TobaccoEntities.csproj", "{E5ED7C79-BCAD-4D77-A36D-6499A949948B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TobaccoEntities", "..\TobaccoEntities\TobaccoEntities\TobaccoEntities.csproj", "{E5ED7C79-BCAD-4D77-A36D-6499A949948B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

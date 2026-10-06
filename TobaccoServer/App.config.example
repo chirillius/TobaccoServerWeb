@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <startup>
+    <supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.5" />
+  </startup>
+  <appSettings>
+    <add key="VideosDirectory" value="Videos" />
+    <add key="TempDirectory" value="Temp" />
+    <add key="ArchivesDirectory" value="Archives" />
+    <add key="ImagesDirectory" value="Images" />
+    <add key="PeriodalTaskJson" value="Configuration\periodal_tasks.json" />
+    <add key="DefectsCutTime" value="0 0 4 * * ?" />
+    <add key="VideoServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="RumblingServiceAddress" value="http://localhost:8991" />
+    <add key="SmokeServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="SpeechToTextAddress" value="http://localhost:8013/" />
+    <add key="LightDetectorAddress" value="http://localhost:8992/" />
+    <add key="StaringAtCameraServiceAddress" value="http://localhost:8993/" />
+    <add key="Utils" value="http://localhost:5121/Utilities/" />
+    <add key="PhoneServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="FoodServiceAddress" value="http://localhost:8016/" />
+    <add key="PoseServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="MoppingServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="CashRegisterServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="ClothesControlServiceAddress" value="http://localhost:8020/" />
+    <add key="StallSurfaceServiceAddress" value="http://localhost:8021/" />
+    <add key="BottleDetectionServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="BadgeDetectionServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="LightDetectionServiceAddress" value="http://localhost:5121/Vision/" />
+    <add key="DefectImageServiceAddress" value="http://localhost:5121/DefectImage/" />
+    <add key="FrameCapturer" value="http://localhost:5121/Utilities/" />
+    <add key="CentralServer" value="http://localhost:5082/" />
+    <add key="AudioSource" value="" />
+    <add key="MinimalActionArea" value="150" />
+  </appSettings>
+  <connectionStrings>
+    <add name="Default" connectionString="Data Source=localhost\SQLEXPRESS;Database=Tobacco;Trusted_Connection=True;Encrypt=False;MultipleActiveResultSets=True;" providerName="System.Data.SqlClient" />
+  </connectionStrings>
+</configuration>

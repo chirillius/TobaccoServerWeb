@@ -31,3 +31,21 @@ TestResults/
 *.cache
 Thumbs.db
 .DS_Store
+
+# Local site configuration and runtime data
+TobaccoServer/App.config
+TobaccoServer/appsettings.json
+TobaccoServer/appsettings.*.local.json
+**/Temp/
+**/Playlists/
+**/*.log
+**/log.txt
+**/ffmpeg.exe
+**/*.onnx
+**/*.pt
+**/*.pth
+**/*.pubxml
+.env
+.env.*
+!.env.example
+temp/
